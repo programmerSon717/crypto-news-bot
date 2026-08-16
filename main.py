@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
-from collectors import binance, upbit, rss, telegram_channels, blockmedia_archive
+from collectors import binance, upbit, rss, telegram_channels, tg_web, blockmedia_archive
 from config import settings
 from models import NewsItem
 from publisher import publish
@@ -142,11 +142,23 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         print(f"[집계] 시간 상한({budget}초) 도달 — {deferred}건은 다음 실행으로 미룸")
 
 
+async def recent_tg_web(client: httpx.AsyncClient, hours: int = 6) -> list[NewsItem]:
+    """공개 채널의 최근 글. 상시 수집용이라 짧은 구간만 본다."""
+    if not settings.tg_web_channels:
+        return []
+    since = datetime.now(tz=KST).timestamp() - hours * 3600
+    items: list[NewsItem] = []
+    for ch in settings.tg_web_channels:
+        items += await tg_web.fetch_since(client, ch, since, max_pages=2)
+    return items
+
+
 async def collect_all(client: httpx.AsyncClient) -> list[NewsItem]:
     items: list[NewsItem] = []
     items += await binance.fetch(client)
     items += await upbit.fetch(client)
     items += await rss.fetch_all(client, settings.rss_sources)
+    items += await recent_tg_web(client)
     items += await telegram_channels.fetch()
     return items
 
@@ -181,7 +193,12 @@ async def main():
             # 텔레그램 소스 채널만 백필. 트위터 캡처를 비전 모델로 읽어 인사이트로 발행한다.
             start = datetime.strptime(tg_since, "%Y-%m-%d").replace(tzinfo=KST).timestamp()
             print(f"[TG백필] {tg_since} 00:00 KST 이후 채널 글 수집")
-            items = await telegram_channels.fetch_since(start)
+            items = []
+            for ch in settings.tg_web_channels:
+                items += await tg_web.fetch_since(client, ch, start)
+            if not items:
+                # 공개 채널이 아니면 웹 미리보기가 비어 나온다 → 개인 계정 경로로 재시도
+                items = await telegram_channels.fetch_since(start)
             items.sort(key=lambda i: i.published_at or 0)  # 시간순 발행
             withpic = sum(1 for i in items if i.image)
             print(f"[TG백필] 대상 {len(items)}건 (이미지 포함 {withpic}건)"

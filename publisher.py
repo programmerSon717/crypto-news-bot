@@ -30,10 +30,17 @@ def render(data: dict, url: str) -> str:
     bullets = "\n".join(f"• {e(b)}" for b in data.get("bullets", []))
     tags = " ".join(data.get("hashtags", []))
 
+    def field(key: str, emoji: str) -> str:
+        """값 앞에 이모지가 이미 붙어 오는 경우가 있어(스키마 설명을 따라함) 중복을 제거한다."""
+        return (data.get(key) or "").strip().removeprefix(emoji).strip()
+
+    lede = field("lede", "☑️")
+    comment = field("comment", "🐧")
+
     parts = [
         f"{data.get('header_emoji', '📰')} <b>{e(data['headline'])}</b>",
         "",
-        f"☑️ {e(data['lede'])}",
+        f"☑️ {e(lede)}",
         "",
         f"📁 <b>{e(data.get('section_title', '주요내용'))}</b>",
         f"<blockquote>{bullets}</blockquote>",
@@ -54,7 +61,7 @@ def render(data: dict, url: str) -> str:
     link_label = "원문 트윗" if data.get("_insight") else "기사 원문"
     parts += [
         "",
-        f"🐧 {e(data['comment'])}",
+        f"🐧 {e(comment)}",
         "",
         f'<a href="{e(url)}">{link_label}</a>',
         "",

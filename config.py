@@ -41,6 +41,14 @@ class Settings:
     use_topics: bool = os.getenv("USE_TOPICS", "false").lower() == "true"
     topics_file: str = os.getenv("TOPICS_FILE", "topics.json")
 
+    # 공개 텔레그램 채널은 웹 미리보기(t.me/s/...)로 읽는다 — 로그인 불필요, 클라우드에서도 동작.
+    # 비공개 채널일 때만 아래 Telethon 경로가 필요하다.
+    tg_web_channels: list = field(default_factory=lambda: [
+        c.strip() for c in os.getenv(
+            "TG_WEB_CHANNELS", os.getenv("TG_SOURCE_CHANNELS", "")
+        ).split(",") if c.strip()
+    ])
+
     # 텔레그램 채널 수집(Telethon). my.telegram.org 에서 발급.
     tg_api_id: str = os.getenv("TG_API_ID", "")
     tg_api_hash: str = os.getenv("TG_API_HASH", "")

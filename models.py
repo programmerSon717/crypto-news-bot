@@ -15,3 +15,4 @@ class NewsItem:
     # 값이 있으면 summarizer 가 이미지 경로로 처리한다.
     image: bytes | None = None
     image_mime: str = "image/jpeg"
+    image_url: str = ""  # 아직 안 받았을 때의 원본 주소(있으면 나중에 지연 다운로드 가능)
