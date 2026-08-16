@@ -16,3 +16,7 @@ class NewsItem:
     image: bytes | None = None
     image_mime: str = "image/jpeg"
     image_url: str = ""  # 아직 안 받았을 때의 원본 주소(있으면 나중에 지연 다운로드 가능)
+
+    # 퍼온 글일 때 '진짜 출처'. 예: 채널이 캡처해 온 트윗/공지의 원문 주소.
+    # 비어 있으면 발행 시 url(수집처 링크)로 대체한다.
+    origin_url: str = ""

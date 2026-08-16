@@ -28,6 +28,22 @@ _TEXT = re.compile(
     r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>', re.DOTALL
 )
 _TAG = re.compile(r"<[^>]+>")
+_HREF = re.compile(r'href="(https?://[^"]+)"')
+
+# 출처로 쓸 수 없는 링크: 텔레그램 내부(채널 자기 자신, 해시태그 검색 등)
+_INTERNAL = ("t.me/", "telegram.me/", "telegram.org/")
+
+
+def _origin_links(block: str) -> list[str]:
+    """메시지 안의 외부 링크. 채널이 붙여둔 '공지원문' 같은 원문 주소를 건진다."""
+    out = []
+    for u in _HREF.findall(block):
+        u = html.unescape(u)
+        if any(k in u for k in _INTERNAL):
+            continue
+        if u not in out:
+            out.append(u)
+    return out
 
 
 def _clean_text(raw: str) -> str:
@@ -56,6 +72,7 @@ def parse_page(page_html: str) -> list[dict]:
             "datetime": dt.group(1) if dt else None,
             "text": _clean_text(text_m.group(1)) if text_m else "",
             "photos": photos,
+            "links": _origin_links(block),
         })
     return out
 
@@ -146,6 +163,7 @@ async def fetch_since(client: httpx.AsyncClient, channel: str, since_epoch: floa
                 image=image,
                 image_mime="image/jpeg",
                 image_url=photo_url,
+                origin_url=m["links"][0] if m["links"] else "",
             )
         )
 

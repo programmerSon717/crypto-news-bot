@@ -83,6 +83,27 @@ def normalize_category(cat: str | None) -> str:
     return "이슈"
 
 
+# 이보다 오래된 글은 '실시간'이 아니라고 보고 게시 시각을 함께 표기한다.
+FRESH_SEC = 3 * 3600
+
+
+def annotate_origin(data: dict, item: NewsItem):
+    """발행 직전에 출처·게시시각 정보를 보강한다.
+
+    - 채널 캡션에 원문 링크가 붙어 있으면 그게 가장 확실하므로 모델 판단보다 우선한다.
+    - 실시간이 아닌 글이면 게시 시각을 표기하도록 표시를 남긴다.
+    """
+    if item.origin_url:
+        data["origin_url"] = item.origin_url
+
+    if item.published_at is None:
+        return
+    age = datetime.now(tz=KST).timestamp() - item.published_at
+    if age > FRESH_SEC:
+        dt = datetime.fromtimestamp(item.published_at, KST)
+        data["_posted_label"] = dt.strftime("%Y-%m-%d %H:%M KST")
+
+
 async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: bool,
                         dry_run: bool = False):
     stats: dict[str, int] = {}
@@ -126,6 +147,7 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         cat = normalize_category(data.get("category"))
         data["category"] = cat
         stats[cat] = stats.get(cat, 0) + 1
+        annotate_origin(data, item)
 
         if dry_run:
             print(f"[dry-run][{cat}] 중요도{data.get('importance')} {data['headline'][:55]}")
