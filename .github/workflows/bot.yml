@@ -1,0 +1,60 @@
+name: crypto-news-bot
+
+on:
+  schedule:
+    # 10분마다. GitHub 부하 상황에 따라 수 분 밀릴 수 있다(무료 티어 특성).
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}   # Actions 탭에서 수동 실행
+
+# 동시 실행되면 상태 DB(botstate.sqlite3)가 꼬이므로 직렬화한다.
+concurrency:
+  group: crypto-news-bot
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # 상태 DB 커밋용
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: 뉴스 수집·발행 1회
+        env:
+          PYTHONUNBUFFERED: "1"   # 없으면 로그가 버퍼에 갇혀 취소 시 아무것도 안 남는다
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.5-flash' }}
+          MIN_IMPORTANCE: ${{ vars.MIN_IMPORTANCE || '3' }}
+          USE_TOPICS: "true"
+          # 한 번 실행에서 쓸 수 있는 시간 상한(초). 이 시간을 넘기면 남은 항목은
+          # 다음 실행으로 미룬다. job 타임아웃에 걸려 통째로 취소되면 발행 이력이
+          # 저장되지 않아 다음 실행이 같은 뉴스를 다시 발행하게 되므로, 그 전에 스스로 끊는다.
+          RUN_BUDGET_SEC: "600"
+        run: python main.py --once
+
+      - name: 발행 이력 저장
+        # 실패·취소되더라도 이미 발행한 것까지는 반드시 기록해야 중복 발행을 막는다.
+        if: always()
+        run: |
+          if [[ -n "$(git status --porcelain botstate.sqlite3)" ]]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add botstate.sqlite3
+            git commit -m "chore: 발행 이력 갱신 [skip ci]"
+            # 다른 실행이 먼저 푸시했을 수 있으므로 rebase 후 재시도
+            git pull --rebase --autostash || true
+            git push
+          else
+            echo "새 발행 없음 — 커밋 생략"
+          fi

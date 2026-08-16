@@ -1,0 +1,212 @@
+# crypto-news-bot 인수인계 문서
+
+> 새 세션에서 이 파일을 먼저 읽으면 지금까지의 맥락을 전부 파악할 수 있다.
+> 최종 갱신: 2026-08-16
+>
+> **봇 id·chat_id·계정명 등 연결 정보는 `HANDOFF.local.md`에 있다** (gitignore 처리, 로컬 전용).
+
+---
+
+## 1. 이 프로젝트가 뭔가
+
+크립토/블록체인 뉴스를 자동 수집 → AI로 요약·분류 → **텔레그램 그룹의 카테고리 탭에 발행**하는 봇.
+
+### 발행 포맷
+
+```
+📕 헤드라인
+
+☑️ 한두 문장 상황 요약
+
+📁 주요내용
+┃ • 핵심 bullet
+┃ • 핵심 bullet
+
+🐧 펭귄 캐릭터의 코멘트 2~4문장
+
+기사 원문(링크)
+
+#국내 #규제
+```
+
+트위터 캡처 글은 여기에 **배경 / 영향 / 지켜볼 포인트** 3개 섹션이 추가로 붙는다(2-2 참고).
+
+### 파이프라인
+
+```
+[수집] RSS 12개 + 업비트/바이낸스 공지 (+텔레그램 채널, 로컬 전용)
+   ↓
+[중복제거] SQLite botstate.sqlite3 (source+unique_id 해시)
+   ↓
+[요약·분류] Google Gemini(무료) → JSON
+   ├─ 일반 뉴스   : 텍스트 → SYSTEM_PROMPT
+   └─ 트위터 캡처 : 이미지 → INSIGHT_SYSTEM_PROMPT (비전)
+   ↓
+[필터] relevant=false 또는 importance < MIN_IMPORTANCE(기본 3) → 스킵
+   ↓
+[발행] 텔레그램 Bot API sendMessage (HTML + blockquote)
+        category → message_thread_id 로 해당 탭에 라우팅
+```
+
+---
+
+## 2. 현재 상태
+
+| 항목 | 상태 |
+|---|---|
+| 텔레그램 봇 + 그룹 연동 | ✅ 완료·검증 |
+| 카테고리 탭 9개 | ✅ 생성 완료 (2-1 참고) |
+| 탭 라우팅 | ✅ 완료·검증 |
+| 요약 엔진 = Gemini 무료 | ✅ 완료 (Claude API에서 전환, 비용 0원) |
+| RSS 소스 12개 | ✅ 전부 수신 검증 완료 |
+| **GitHub Actions 24시간 운영** | ✅ 완료·검증 (10분 주기) |
+| 트위터 캡처 인사이트 | ⚠️ 코드 완성, **Telethon 로그인 대기** |
+
+### 2-1. 카테고리 (탭)
+
+`국내정책` · `US Policy` · `Japan Policy` · `Hong Kong Policy` ·
+`Singapore Policy` · `UAE Policy` · `Vietnam Policy` · `해외정책` · `이슈`
+
+- 나라별 탭은 **그 나라 규제당국이 주체일 때만** 쓴다. 한국 기업이 미 SEC 제재를 받으면 `US Policy`.
+- `해외정책`은 6개국에 해당하지 않는 나머지(EU·영국·중국·국제기구)용 catch-all.
+- `이슈`는 정책이 아닌 전부(해킹·상장·시황·기업).
+- 탭을 추가할 땐 `topics.py`의 `CATEGORIES`와 `prompts.py`의 분류 기준을 **함께** 고쳐야 한다.
+- 모델이 표기를 흔들어도(`US policy`, `미국정책`) `main.normalize_category()`가 보정한다.
+
+### 2-2. 트위터 캡처 인사이트
+
+소스 채널은 트위터(X) 게시물 **캡처 이미지 + 운영자 한 줄 코멘트** 형태다.
+본문이 이미지 안에 있어 텍스트만으로는 아무것도 못 읽는다. 그래서:
+
+- 사진이 붙은 글은 **캡션이 짧아도 버리지 않는다** (기존엔 40자 미만이면 전부 버렸음)
+- 이미지를 Gemini 비전에 넘겨 트윗을 읽게 한다
+- 운영자의 러프한 사견 대신 **배경(📌) / 영향(📈) / 지켜볼 포인트(🔍)** 를 생성한다
+- 없는 수치·법령명·선례를 지어내지 못하도록 프롬프트에 금지 규칙을 명시했다
+
+---
+
+## 3. 파일 구조
+
+```
+crypto-news-bot/
+├── main.py                     # 진입점. 실행 모드 분기 + 카테고리 보정 + 시간 상한
+├── config.py                   # .env 로딩, RSS 소스 목록
+├── models.py                   # NewsItem (이미지 바이트 포함)
+├── store.py                    # SQLite 중복제거
+├── prompts.py                  # ★ 채널 스타일·분류 기준 전부 여기서 제어
+├── summarizer.py               # Gemini 호출 (텍스트/비전, 재시도·폴백)
+├── publisher.py                # 텔레그램 발행 + 탭 라우팅 + 렌더링
+├── topics.py                   # 탭 생성/캐시/조회
+├── setup_topics.py             # 탭 생성 스크립트 (카테고리 추가 후 재실행)
+├── tg_login.py                 # Telethon 최초 로그인 (사람이 터미널에서 직접)
+├── collectors/
+│   ├── rss.py                  # RSS 수집 + 발행일 파싱
+│   ├── upbit.py                # 업비트 공지 (클라우드에서는 403 차단됨)
+│   ├── binance.py              # 바이낸스 공지
+│   ├── blockmedia_archive.py   # 백필 전용: 사이트맵에서 특정 날짜 기사
+│   └── telegram_channels.py    # 텔레그램 채널 수집 (이미지 다운로드 포함)
+├── .github/workflows/bot.yml   # 24시간 클라우드 실행
+├── .env                        # ★ 실제 키. 절대 커밋 금지
+├── HANDOFF.local.md            # ★ 연결 정보. 절대 커밋 금지
+├── topics.json                 # 탭 thread_id 캐시
+└── botstate.sqlite3            # 발행 이력
+```
+
+---
+
+## 4. 실행 방법
+
+```bash
+cd ~/<프로젝트 경로>/crypto-news-bot
+
+venv/bin/python main.py --warm                        # 기존 뉴스를 '본 것'으로 등록(발행X)
+venv/bin/python main.py                               # 상시 실행(맥 켜져 있어야 함)
+venv/bin/python main.py --once                        # 1회만 (스케줄러용)
+venv/bin/python main.py --since 2026-08-16 --dry-run  # 뉴스 백필 대상만 확인
+venv/bin/python main.py --tg-since 2026-08-10         # 텔레그램 채널 백필(트위터 캡처)
+venv/bin/python setup_topics.py                       # 탭 생성(카테고리 추가 시 재실행)
+venv/bin/python tg_login.py                           # 텔레그램 로그인 — 반드시 터미널 앱에서
+```
+
+**주의: 반드시 `venv/bin/python` 사용.** 시스템 python에는 의존성이 없다.
+
+---
+
+## 5. 클라우드 운영 (GitHub Actions)
+
+10분 주기 cron + 수동 실행. 발행 이력(`botstate.sqlite3`)을 매 실행 후 리포에 커밋해 상태를 잇는다.
+
+**운영상 반드시 지켜야 할 것 — 되돌리지 말 것:**
+
+| 설정 | 이유 |
+|---|---|
+| `PYTHONUNBUFFERED: 1` | 없으면 로그가 버퍼에 갇혀, 취소 시 **아무 기록도 안 남는다** |
+| 발행 이력 저장에 `if: always()` | 취소·실패해도 발행분을 기록해야 다음 실행이 **같은 뉴스를 재발행하지 않는다** |
+| `RUN_BUDGET_SEC: 600` | job 타임아웃(20분)에 걸려 통째로 취소되기 전에 스스로 끊는다. 남은 건 다음 실행으로 |
+| `concurrency` 그룹 | 동시 실행 시 DB 경합 방지 |
+
+> 실제로 첫 실행이 20분 타임아웃에 걸려 취소됐고, 발행 이력이 저장되지 않아
+> 재발행 위험이 발생했다. 위 3가지는 그 사고의 대응책이다.
+
+**한계:**
+- 업비트 공지는 클라우드에서 **403**(데이터센터 IP 차단). 맥에서는 정상.
+- Telethon 세션은 개인 계정 권한이라 리포에 올리지 않는다 → 트위터 캡처 수집은 **로컬 전용**.
+
+---
+
+## 6. 중요한 의사결정과 그 이유 (재논의 방지)
+
+| 결정 | 이유 |
+|---|---|
+| 채널 → **그룹**으로 이전 | 텔레그램 Topics(탭)는 **슈퍼그룹 전용**. 채널은 `message_thread_id` 미지원 |
+| Claude API → **Gemini 무료** | 무료 요구. 월 3~4만원 → 0원. 포맷·품질 유지됨 |
+| 모델 `gemini-3.5-flash` | `gemini-2.0-flash`/`2.5-flash`는 **퇴역(404)**, `3.7-flash`·`flash-latest`는 **503 과부하**. 폴백: `gemini-3-flash-preview`, `gemini-3.1-flash-lite` |
+| 리포 **public** | private는 Actions 무료 2,000분/월인데 10분 주기면 초과. public은 무제한 |
+| 2025-01 전체 백필 **거부** | 블록미디어만 3.9만 건, 전체 10만 건+. 무료 한도·도배(32시간)·저작권 문제 |
+| 백필 시 날짜 불명 항목 제외 | 거래소 공지는 발행일이 없어, 통과시키면 과거 공지가 무제한 유입됨 |
+| X(트위터) 직접 수집 **제외** | 2023년 이후 무료 크롤링 차단, 공식 API 월 $200+. 대신 **캡처를 올리는 텔레그램 채널을 비전으로 읽는다** |
+| 블록미디어 사이트맵 사용 | RSS는 최신 10건만 → 하루 18건을 못 담음. robots.txt 공개 사이트맵 사용 |
+
+---
+
+## 7. 함정 / 하마터면 놓칠 뻔한 것들
+
+1. **`post-sitemap.xml`(번호 없음)은 2018년치다.** 번호가 클수록 최신.
+   (`blockmedia_archive._sitemap_num`)
+2. **Telethon `start()`는 미인증 시 stdin으로 전화번호를 물으며 무한 대기한다.**
+   백그라운드·CI에서 그대로 멈춘다 → `connect()` + `is_user_authorized()`로 교체.
+   세션 파일이 없으면 조용히 건너뛴다. **이 패턴을 되돌리지 말 것.**
+3. **`tg_login.py`는 진짜 터미널(TTY)이 필요하다.** 에이전트의 bash나 파이프로 실행하면
+   `EOFError`로 죽는다. 터미널 앱에서 사람이 직접 실행해야 한다.
+4. Gemini가 JSON 앞뒤에 설명을 붙이는 경우가 있어 `_extract_json()`이 정규식으로 객체만 뽑는다.
+5. 무료 티어는 503이 잦다 → 재시도 3회 + 대체 모델 2개 폴백.
+6. `store.mark_seen()`은 **발행 전에** 호출된다(요약 실패분 재시도 방지). 그래서 프로세스가
+   중간에 죽으면 그 항목은 발행 없이 유실된다 — `RUN_BUDGET_SEC`은 항목에 손대기 **전에** 끊는다.
+7. 로컬 상시 실행과 클라우드 실행을 **동시에 켜면 중복 발행된다**(DB가 따로 놀아서).
+   클라우드를 쓰기로 했으면 로컬 프로세스는 꺼야 한다.
+
+---
+
+## 8. 커스터마이징 포인트
+
+- **채널 톤·이모지·펭귄 코멘트**: `prompts.py`의 `SYSTEM_PROMPT`
+- **트위터 캡처 인사이트 스타일**: `prompts.py`의 `INSIGHT_SYSTEM_PROMPT`
+- **카테고리 분류 기준**: `prompts.py`의 "카테고리 분류 기준" 섹션
+- **발행 임계값**: `.env`의 `MIN_IMPORTANCE` (기본 3)
+- **소스 추가**: `config.py`의 `rss_sources`에 `(이름, URL, 힌트)` 한 줄
+- **탭 추가**: `topics.py`의 `CATEGORIES` + `prompts.py` 분류 기준 → `setup_topics.py` 재실행
+- **메시지 레이아웃**: `publisher.py`의 `render()`
+
+---
+
+## 9. 검증된 RSS 소스 12개
+
+**국내** — 블록미디어, 토큰포스트, 블록체인투데이, 금융위원회
+**해외** — CoinDesk, Cointelegraph, Cointelegraph 규제, The Block, Decrypt, The Defiant, Protos, SEC 보도자료
+
+> 제외한 것: 디센터(404), 코인데스크코리아(빈 응답), Rekt(500), 코인리더스(404),
+> 한국은행/금감원(빈 응답), 블로터·전자신문(부동산·채용 뉴스까지 섞여 할당량 낭비)
+
+> **국내정책 탭이 비어 보이는 건 정상일 수 있다.** 소스 12개는 전부 살아 있고,
+> 주말·공휴일엔 금융위가 보도자료를 안 낸다. 국내 매체 기사 대부분은 시황·기업 소식이라
+> `이슈`로 분류된다. 의심되면 `check_feeds` 진단으로 소스 상태부터 확인할 것.
