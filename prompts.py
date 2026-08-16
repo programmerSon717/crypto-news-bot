@@ -116,14 +116,20 @@ JSON 외 텍스트나 마크다운 백틱을 절대 포함하지 마세요.
 카테고리 분류 기준은 일반 뉴스와 동일하다: 규제당국이 주체면 해당 국가 정책 탭, 민간·시장·사건이면 이슈."""
 
 
-def build_insight_prompt(caption: str, url: str, posted_at: str) -> str:
-    return f"""아래 트위터 캡처 이미지를 읽고 분석 인사이트로 가공하세요.
+def build_insight_prompt(caption: str, url: str, posted_at: str,
+                         has_image: bool = True) -> str:
+    if has_image:
+        head = ("아래 캡처 이미지를 읽고 분석 인사이트로 가공하세요.\n"
+                "이미지에 인용 트윗(작은 박스)이 함께 있으면 그 내용도 함께 읽어 맥락에 반영하세요.")
+    else:
+        head = ("아래 글을 분석 인사이트로 가공하세요. 이미지가 없으므로 본문 텍스트만 근거로 씁니다.\n"
+                "본문에 없는 내용을 채워 넣지 마세요.")
+
+    return f"""{head}
 
 게시 시각(KST): {posted_at}
-원문 링크: {url}
-채널 운영자 코멘트: {caption or "(없음)"}
-
-이미지에 인용 트윗(작은 박스)이 함께 있으면 그 내용도 함께 읽어 맥락에 반영하세요."""
+수집 위치(출처 아님, 참고용): {url}
+본문/운영자 코멘트: {caption or "(없음)"}"""
 
 
 def build_user_prompt(source: str, title: str, url: str, body: str, region_hint: str) -> str:

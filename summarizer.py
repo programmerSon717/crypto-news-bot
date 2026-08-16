@@ -63,28 +63,27 @@ def _generate_sync(model: str, user_prompt: str) -> str:
     return resp.text or ""
 
 
-def _generate_vision_sync(model: str, user_prompt: str, image: bytes, mime: str) -> str:
+def _generate_vision_sync(model: str, user_prompt: str, image: bytes | None,
+                          mime: str) -> str:
+    contents = [user_prompt] if image is None else [
+        types.Part.from_bytes(data=image, mime_type=mime),
+        user_prompt,
+    ]
     resp = client.models.generate_content(
-        model=model,
-        contents=[
-            types.Part.from_bytes(data=image, mime_type=mime),
-            user_prompt,
-        ],
-        config=_insight_config,
+        model=model, contents=contents, config=_insight_config
     )
     return resp.text or ""
 
 
 async def summarize_insight(item: NewsItem, posted_at: str) -> dict | None:
-    """트위터 캡처 이미지를 읽어 분석 인사이트 JSON을 만든다.
+    """퍼온 글을 분석 인사이트 JSON으로 만든다.
 
-    이미지가 없으면 캡션만으로는 인사이트를 쓸 근거가 부족하므로 None 을 돌려
-    호출부가 일반 요약 경로로 처리하게 한다.
+    이미지가 있으면 비전으로 캡처를 읽고, 없으면 본문 텍스트만으로 처리한다.
+    **이미지가 없다고 일반 뉴스 경로로 흘려보내면 안 된다** — 그 경로는 출처를
+    '기사 원문 = 수집처 링크'로 표기해서, 퍼온 채널이 출처로 찍혀버린다.
     """
-    if not item.image:
-        return None
-
-    user_prompt = build_insight_prompt(item.body, item.url, posted_at)
+    user_prompt = build_insight_prompt(item.body, item.url, posted_at,
+                                       has_image=bool(item.image))
     models = [settings.gemini_model, *FALLBACK_MODELS]
     last_err = None
 

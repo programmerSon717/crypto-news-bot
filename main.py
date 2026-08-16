@@ -88,6 +88,11 @@ def normalize_category(cat: str | None) -> str:
 FRESH_SEC = 3 * 3600
 
 
+def is_repost(item: NewsItem) -> bool:
+    """다른 텔레그램 채널에서 퍼온 글인가. 이 글들은 수집처가 출처가 아니다."""
+    return item.source.startswith("TG:")
+
+
 def topics_thread_id(category: str) -> int | None:
     import topics as _topics
     return _topics.thread_id_for(category)
@@ -99,6 +104,9 @@ def annotate_origin(data: dict, item: NewsItem):
     - 채널 캡션에 원문 링크가 붙어 있으면 그게 가장 확실하므로 모델 판단보다 우선한다.
     - 실시간이 아닌 글이면 게시 시각을 표기하도록 표시를 남긴다.
     """
+    if is_repost(item):
+        # 렌더러가 수집처 링크를 출처로 쓰지 않게 하는 표시
+        data["_repost"] = True
     if item.origin_url:
         data["origin_url"] = item.origin_url
 
@@ -132,16 +140,16 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         if warm:
             continue
 
-        # 트위터 캡처처럼 본문이 이미지 안에 있으면 비전 모델로 인사이트를 뽑는다.
-        # 실패하면 캡션만으로 일반 요약을 시도한다.
+        # 다른 채널에서 퍼온 글은 이미지 유무와 무관하게 인사이트 경로로 처리한다.
+        # 일반 뉴스 경로로 흘리면 출처가 '퍼온 채널'로 찍히므로 폴백하지 않는다.
         data = None
-        if item.image:
+        if is_repost(item):
             posted = (
                 datetime.fromtimestamp(item.published_at, KST).strftime("%Y-%m-%d %H:%M")
                 if item.published_at else "불명"
             )
             data = await summarize_insight(item, posted)
-        if data is None:
+        else:
             data = await summarize(item)
         if data is None:
             print(f"[skip] 무관/실패: {item.title[:60]}")

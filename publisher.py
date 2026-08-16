@@ -90,7 +90,8 @@ def _source_line(data: dict, url: str) -> str:
     게시자 이름만 밝히고 링크는 생략한다 — 없는 주소를 지어내지 않는다.
     """
     e = html.escape
-    if not data.get("_insight"):
+    # 퍼온 글이 아니면 수집처가 곧 원문이다(RSS 기사 등).
+    if not (data.get("_repost") or data.get("_insight")):
         return f'<a href="{e(url)}">기사 원문</a>'
 
     label, origin_url = origin_of(data)
@@ -119,6 +120,10 @@ async def publish(client: httpx.AsyncClient, data: dict, url: str,
             "prefer_large_media": True,
             "show_above_text": True,
         }
+    elif data.get("_repost"):
+        # 이미지가 없으면 텔레그램이 본문의 링크(=퍼온 채널)로 미리보기 카드를 만든다.
+        # 카드에 채널 이름이 박혀 출처가 그쪽으로 보이므로 아예 끈다.
+        payload["link_preview_options"] = {"is_disabled": True}
     else:
         payload["disable_web_page_preview"] = False
 
