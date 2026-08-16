@@ -17,6 +17,18 @@ class Store:
                     published_at REAL
                 )"""
             )
+            # 발행한 메시지의 id. 나중에 형식을 고쳐 수정(editMessageText)하거나
+            # 잘못 나간 글을 지우려면 id가 있어야 한다. 없으면 손댈 방법이 없다.
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS published (
+                    key TEXT PRIMARY KEY,
+                    message_id INTEGER,
+                    thread_id INTEGER,
+                    source_url TEXT,
+                    headline TEXT,
+                    published_at REAL
+                )"""
+            )
 
     @contextmanager
     def _conn(self):
@@ -42,3 +54,19 @@ class Store:
                 "INSERT OR IGNORE INTO seen (key, source, title, published_at) VALUES (?,?,?,?)",
                 (key, source, title, time.time()),
             )
+
+    def record_published(self, key: str, message_id: int, thread_id: int | None,
+                         source_url: str, headline: str):
+        with self._conn() as c:
+            c.execute(
+                """INSERT OR REPLACE INTO published
+                   (key, message_id, thread_id, source_url, headline, published_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (key, message_id, thread_id, source_url, headline, time.time()),
+            )
+
+    def forget(self, key: str):
+        """재발행할 수 있도록 이력에서 지운다."""
+        with self._conn() as c:
+            c.execute("DELETE FROM seen WHERE key=?", (key,))
+            c.execute("DELETE FROM published WHERE key=?", (key,))

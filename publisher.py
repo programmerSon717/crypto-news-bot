@@ -69,17 +69,8 @@ def render(data: dict, url: str) -> str:
     return "\n".join(parts)
 
 
-def _source_line(data: dict, url: str) -> str:
-    """출처 줄.
-
-    퍼온 글은 **캡처를 올린 채널이 아니라 원 게시물이 출처**다.
-    원문 주소를 알면 그리로 걸고, 모르면 최소한 게시자만이라도 밝힌 뒤
-    실제로 가져온 위치(채널 글)를 함께 남긴다.
-    """
-    e = html.escape
-    if not data.get("_insight"):
-        return f'<a href="{e(url)}">기사 원문</a>'
-
+def origin_of(data: dict) -> tuple[str, str]:
+    """(표시 이름, 주소). 주소를 모르면 주소는 빈 문자열."""
     origin_url = (data.get("origin_url") or "").strip()
     author = (data.get("origin_author") or "").strip()
     platform = (data.get("origin_platform") or "").strip()
@@ -88,21 +79,48 @@ def _source_line(data: dict, url: str) -> str:
     if not origin_url and author.startswith("@") and platform == "X":
         origin_url = f"https://x.com/{author[1:]}"
 
-    label = author or platform or "원문"
+    return (author or platform or "원문"), origin_url
+
+
+def _source_line(data: dict, url: str) -> str:
+    """출처 줄.
+
+    퍼온 글은 **캡처를 올린 채널이 아니라 원 게시물이 출처**다.
+    채널은 중간 경로일 뿐이라 출처로 적지 않는다. 원문을 못 찾으면
+    게시자 이름만 밝히고 링크는 생략한다 — 없는 주소를 지어내지 않는다.
+    """
+    e = html.escape
+    if not data.get("_insight"):
+        return f'<a href="{e(url)}">기사 원문</a>'
+
+    label, origin_url = origin_of(data)
     if origin_url:
-        return (f'📎 출처: <a href="{e(origin_url)}">{e(label)}</a>'
-                f' · <a href="{e(url)}">퍼온 곳</a>')
-    return f'📎 출처: {e(label)} · <a href="{e(url)}">퍼온 곳</a>'
+        return f'📎 출처: <a href="{e(origin_url)}">{e(label)}</a>'
+    return f"📎 출처: {e(label)}"
 
 
-async def publish(client: httpx.AsyncClient, data: dict, url: str):
+async def publish(client: httpx.AsyncClient, data: dict, url: str,
+                  image_url: str = "") -> int | None:
+    """발행하고 message_id 를 돌려준다. 실패하면 None.
+
+    캡처 이미지가 있으면 링크 미리보기로 본문 위에 띄운다. sendPhoto 는 캡션이
+    1024자로 제한돼 인사이트 본문이 잘리므로 쓰지 않는다.
+    """
     text = render(data, url)
     payload = {
         "chat_id": settings.telegram_channel_id,
         "text": text,
         "parse_mode": "HTML",
-        "disable_web_page_preview": False,
     }
+
+    if image_url:
+        payload["link_preview_options"] = {
+            "url": image_url,
+            "prefer_large_media": True,
+            "show_above_text": True,
+        }
+    else:
+        payload["disable_web_page_preview"] = False
 
     # 카테고리에 해당하는 탭(토픽)으로 라우팅. 토픽 미사용이면 그대로 본문에 발행.
     category = data.get("category")
@@ -110,9 +128,12 @@ async def publish(client: httpx.AsyncClient, data: dict, url: str):
     if thread_id:
         payload["message_thread_id"] = thread_id
 
-    r = await client.post(API, json=payload, timeout=15)
+    r = await client.post(API, json=payload, timeout=20)
     if r.status_code != 200:
         print(f"[publisher] 발행 실패: {r.status_code} {r.text[:200]}")
-    else:
-        where = f"[{category}]" if thread_id else ""
-        print(f"[publisher] 발행 완료{where}: {data['headline'][:50]}")
+        return None
+
+    where = f"[{category}]" if thread_id else ""
+    pic = " +캡처" if image_url else ""
+    print(f"[publisher] 발행 완료{where}{pic}: {data['headline'][:50]}")
+    return r.json().get("result", {}).get("message_id")

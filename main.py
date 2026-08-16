@@ -20,6 +20,7 @@ import httpx
 from collectors import binance, upbit, rss, telegram_channels, tg_web, blockmedia_archive
 from config import settings
 from models import NewsItem
+import publisher
 from publisher import publish
 from store import Store
 from summarizer import summarize, summarize_insight
@@ -85,6 +86,11 @@ def normalize_category(cat: str | None) -> str:
 
 # 이보다 오래된 글은 '실시간'이 아니라고 보고 게시 시각을 함께 표기한다.
 FRESH_SEC = 3 * 3600
+
+
+def topics_thread_id(category: str) -> int | None:
+    import topics as _topics
+    return _topics.thread_id_for(category)
 
 
 def annotate_origin(data: dict, item: NewsItem):
@@ -153,7 +159,11 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
             print(f"[dry-run][{cat}] 중요도{data.get('importance')} {data['headline'][:55]}")
             continue
 
-        await publish(client, data, item.url)
+        msg_id = await publish(client, data, item.url, image_url=item.image_url)
+        if msg_id:
+            _, origin = publisher.origin_of(data)
+            store.record_published(key, msg_id, topics_thread_id(cat),
+                                   origin or item.url, data["headline"])
         await asyncio.sleep(3)  # 텔레그램 rate limit 여유
 
     total = sum(stats.values())
