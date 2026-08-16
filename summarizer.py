@@ -22,7 +22,15 @@ from prompts import (
     build_user_prompt,
 )
 
-client = genai.Client(api_key=settings.gemini_api_key)
+# 타임아웃을 주지 않으면 응답이 끊겨도 영원히 대기한다.
+# 실제로 백필이 이 상태로 7시간 멈춰 있었다. (단위: ms)
+client = genai.Client(
+    api_key=settings.gemini_api_key,
+    http_options=types.HttpOptions(timeout=90_000),
+)
+
+# 라이브러리 단 타임아웃이 안 먹는 경우를 대비한 상한(초).
+CALL_TIMEOUT = 120
 
 # 기본 모델이 과부하(503)일 때 순서대로 시도할 대체 모델
 FALLBACK_MODELS = ["gemini-3-flash-preview", "gemini-3.1-flash-lite"]
@@ -42,6 +50,17 @@ _insight_config = types.GenerateContentConfig(
     temperature=0.4,
     max_output_tokens=3000,
 )
+
+
+def _retryable(err: Exception, msg: str) -> bool:
+    """같은 모델로 다시 시도해볼 만한 오류인가.
+
+    타임아웃은 응답이 늦은 것뿐이라 재시도 대상이다. 이걸 빠뜨리면
+    한 번 느려졌을 때 곧장 대체 모델로 넘어가버린다.
+    """
+    if isinstance(err, (TimeoutError, asyncio.TimeoutError)):
+        return True
+    return "503" in msg or "429" in msg or "UNAVAILABLE" in msg
 
 
 def _extract_json(text: str) -> dict:
@@ -75,6 +94,44 @@ def _generate_vision_sync(model: str, user_prompt: str, image: bytes | None,
     return resp.text or ""
 
 
+async def generate_json(system_prompt: str, user_prompt: str,
+                        max_tokens: int = 2000) -> dict | None:
+    """임의의 시스템 프롬프트로 JSON 응답을 받는다(다이제스트 등 범용).
+
+    요약·분류 경로와 동일하게 503/429 재시도 + 대체 모델 폴백을 적용한다.
+    """
+    config = types.GenerateContentConfig(
+        system_instruction=system_prompt,
+        response_mime_type="application/json",
+        temperature=0.4,
+        max_output_tokens=max_tokens,
+    )
+
+    def _call(model: str) -> str:
+        resp = client.models.generate_content(
+            model=model, contents=user_prompt, config=config
+        )
+        return resp.text or ""
+
+    last_err = None
+    for model in [settings.gemini_model, *FALLBACK_MODELS]:
+        for attempt in range(3):
+            try:
+                return _extract_json(
+                    await asyncio.wait_for(asyncio.to_thread(_call, model), CALL_TIMEOUT)
+                )
+            except Exception as e:
+                last_err = e
+                msg = str(e)
+                if _retryable(e, msg):
+                    await asyncio.sleep(2 * (attempt + 1))
+                    continue
+                break
+
+    print(f"[generate_json] 실패: {last_err}")
+    return None
+
+
 async def summarize_insight(item: NewsItem, posted_at: str) -> dict | None:
     """퍼온 글을 분석 인사이트 JSON으로 만든다.
 
@@ -90,8 +147,10 @@ async def summarize_insight(item: NewsItem, posted_at: str) -> dict | None:
     for model in models:
         for attempt in range(3):
             try:
-                text = await asyncio.to_thread(
-                    _generate_vision_sync, model, user_prompt, item.image, item.image_mime
+                text = await asyncio.wait_for(
+                    asyncio.to_thread(_generate_vision_sync, model, user_prompt,
+                                      item.image, item.image_mime),
+                    CALL_TIMEOUT,
                 )
                 data = _extract_json(text)
                 if not data.get("relevant"):
@@ -101,7 +160,7 @@ async def summarize_insight(item: NewsItem, posted_at: str) -> dict | None:
             except Exception as e:
                 last_err = e
                 msg = str(e)
-                if "503" in msg or "429" in msg or "UNAVAILABLE" in msg:
+                if _retryable(e, msg):
                     await asyncio.sleep(2 * (attempt + 1))
                     continue
                 break
@@ -121,7 +180,9 @@ async def summarize(item: NewsItem) -> dict | None:
     for model in models:
         for attempt in range(3):
             try:
-                text = await asyncio.to_thread(_generate_sync, model, user_prompt)
+                text = await asyncio.wait_for(
+                    asyncio.to_thread(_generate_sync, model, user_prompt), CALL_TIMEOUT
+                )
                 data = _extract_json(text)
                 if not data.get("relevant"):
                     return None
@@ -130,7 +191,7 @@ async def summarize(item: NewsItem) -> dict | None:
                 last_err = e
                 msg = str(e)
                 # 과부하/레이트리밋이면 잠시 쉬었다 재시도, 그 외 오류는 다음 모델로
-                if "503" in msg or "429" in msg or "UNAVAILABLE" in msg:
+                if _retryable(e, msg):
                     await asyncio.sleep(2 * (attempt + 1))
                     continue
                 break  # 파싱 실패 등 → 다음 모델 시도

@@ -9,6 +9,9 @@
     python main.py --since 2026-08-16        # 해당 날짜 00시(KST) 이후 뉴스 백필
     python main.py --since 2026-08-16 --dry-run   # 발행 없이 대상만 출력
     python main.py --tg-since 2026-08-10     # 텔레그램 소스 채널만 백필(트위터 캡처 인사이트)
+    python main.py --digest                  # 직전 1시간 카테고리별 요약 + 전체 브리핑
+    python main.py --digest --hours 3        # 3시간 구간
+    python main.py --digest --dry-run        # 발행 없이 확인
 """
 import asyncio
 import sys
@@ -171,7 +174,8 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         if msg_id:
             _, origin = publisher.origin_of(data)
             store.record_published(key, msg_id, topics_thread_id(cat),
-                                   origin or item.url, data["headline"])
+                                   origin or item.url, data["headline"],
+                                   category=cat, lede=data.get("lede", ""))
         await asyncio.sleep(3)  # 텔레그램 rate limit 여유
 
     total = sum(stats.values())
@@ -227,8 +231,15 @@ async def main():
     dry_run = "--dry-run" in sys.argv
 
     tg_since = _arg_value("--tg-since")
+    do_digest = "--digest" in sys.argv
+    digest_hours = int(_arg_value("--hours") or 1)
 
     async with httpx.AsyncClient() as client:
+        if do_digest:
+            import digest
+            await digest.run(client, store, hours=digest_hours, dry_run=dry_run)
+            return
+
         if tg_since:
             # 텔레그램 소스 채널만 백필. 트위터 캡처를 비전 모델로 읽어 인사이트로 발행한다.
             start = datetime.strptime(tg_since, "%Y-%m-%d").replace(tzinfo=KST).timestamp()

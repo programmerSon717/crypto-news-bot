@@ -29,6 +29,21 @@ class Store:
                     published_at REAL
                 )"""
             )
+            # 시간별 다이제스트를 만들려면 헤드라인만으로는 부족해 분류·요약문도 남긴다.
+            # 이미 만들어진 DB에도 적용되도록 없을 때만 컬럼을 추가한다.
+            cols = {r[1] for r in c.execute("PRAGMA table_info(published)")}
+            for col in ("category", "lede"):
+                if col not in cols:
+                    c.execute(f"ALTER TABLE published ADD COLUMN {col} TEXT")
+            # 다이제스트 중복 발행 방지용 — 어느 구간까지 요약했는지 기록
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS digest_log (
+                    scope TEXT,
+                    window_end REAL,
+                    message_id INTEGER,
+                    PRIMARY KEY (scope, window_end)
+                )"""
+            )
 
     @contextmanager
     def _conn(self):
@@ -56,13 +71,47 @@ class Store:
             )
 
     def record_published(self, key: str, message_id: int, thread_id: int | None,
-                         source_url: str, headline: str):
+                         source_url: str, headline: str,
+                         category: str = "", lede: str = ""):
         with self._conn() as c:
             c.execute(
                 """INSERT OR REPLACE INTO published
-                   (key, message_id, thread_id, source_url, headline, published_at)
-                   VALUES (?,?,?,?,?,?)""",
-                (key, message_id, thread_id, source_url, headline, time.time()),
+                   (key, message_id, thread_id, source_url, headline,
+                    published_at, category, lede)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (key, message_id, thread_id, source_url, headline, time.time(),
+                 category, lede),
+            )
+
+    def published_between(self, start: float, end: float) -> list[dict]:
+        """구간 안에 발행된 글 목록(오래된 순). 다이제스트 재료."""
+        with self._conn() as c:
+            rows = c.execute(
+                """SELECT category, headline, lede, source_url, message_id, published_at
+                   FROM published
+                   WHERE published_at >= ? AND published_at < ?
+                   ORDER BY published_at""",
+                (start, end),
+            ).fetchall()
+        return [
+            {"category": r[0] or "이슈", "headline": r[1], "lede": r[2] or "",
+             "source_url": r[3] or "", "message_id": r[4], "published_at": r[5]}
+            for r in rows
+        ]
+
+    def digest_done(self, scope: str, window_end: float) -> bool:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT 1 FROM digest_log WHERE scope=? AND window_end=?",
+                (scope, window_end),
+            ).fetchone()
+            return row is not None
+
+    def record_digest(self, scope: str, window_end: float, message_id: int):
+        with self._conn() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO digest_log (scope, window_end, message_id) VALUES (?,?,?)",
+                (scope, window_end, message_id),
             )
 
     def forget(self, key: str):

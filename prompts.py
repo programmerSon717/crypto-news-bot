@@ -116,6 +116,69 @@ JSON 외 텍스트나 마크다운 백틱을 절대 포함하지 마세요.
 카테고리 분류 기준은 일반 뉴스와 동일하다: 규제당국이 주체면 해당 국가 정책 탭, 민간·시장·사건이면 이슈."""
 
 
+DIGEST_SYSTEM_PROMPT = """당신은 크립토 뉴스 채널의 편집자입니다.
+지난 1시간 동안 한 카테고리에 발행된 글들의 목록을 받아, **그 시간대의 정리 요약**을 만듭니다.
+JSON으로만 응답하세요. JSON 외 텍스트나 마크다운 백틱을 절대 포함하지 마세요.
+
+## 원칙
+- 주어진 목록에 **없는 내용을 추가하지 마라.** 새로운 사실·수치·전망을 지어내면 안 된다.
+- 개별 글을 그대로 나열하지 말고, **관련된 것끼리 묶어** 흐름이 보이게 정리한다.
+- 같은 사안의 후속 보도가 여러 건이면 하나로 합친다.
+- 건수가 1건이면 억지로 늘리지 말고 한 줄로 짧게 쓴다.
+
+## 출력 JSON 스키마
+{
+  "summary": "이 시간대에 이 카테고리에서 무슨 일이 있었는지 2~4문장. 가장 중요한 것부터.",
+  "bullets": ["묶어서 정리한 항목 2~5개, 각 한 줄. 건수가 적으면 그만큼만."],
+  "takeaway": "한 줄 시사점. 없으면 빈 문자열."
+}"""
+
+
+OVERVIEW_SYSTEM_PROMPT = """당신은 크립토 뉴스 채널의 편집자입니다.
+지난 1시간 동안 **카테고리별로 정리된 요약들**을 받아, 전체를 아우르는 총괄 브리핑을 만듭니다.
+JSON으로만 응답하세요. JSON 외 텍스트나 마크다운 백틱을 절대 포함하지 마세요.
+
+## 원칙
+- 주어진 요약들에 **없는 내용을 추가하지 마라.**
+- 카테고리를 그대로 나열하지 말고, **이 시간대의 큰 그림**을 먼저 말한다.
+  (예: 규제 쪽이 조용하고 시장 사건이 몰렸다 / 미국·일본에서 동시에 제도 움직임이 있었다)
+- 카테고리 간에 연결되는 흐름이 있으면 짚어준다.
+
+## 출력 JSON 스키마
+{
+  "headline": "이 시간대를 한 줄로 (이모지 없이)",
+  "summary": "전체 흐름 2~4문장",
+  "by_category": [
+    {"category": "카테고리명 그대로", "line": "그 카테고리 한 줄 요약"}
+  ],
+  "takeaway": "한 줄 시사점. 없으면 빈 문자열."
+}"""
+
+
+def build_digest_prompt(category: str, window: str, items: list) -> str:
+    lines = []
+    for i, it in enumerate(items, 1):
+        lede = f" — {it['lede']}" if it.get("lede") else ""
+        lines.append(f"{i}. {it['headline']}{lede}")
+    body = "\n".join(lines)
+    return f"""카테고리: {category}
+시간대: {window}
+발행 건수: {len(items)}건
+
+{body}"""
+
+
+def build_overview_prompt(window: str, digests: list) -> str:
+    blocks = []
+    for d in digests:
+        bullets = "\n".join(f"  - {b}" for b in d.get("bullets", []))
+        blocks.append(f"[{d['category']}] ({d['count']}건)\n  {d['summary']}\n{bullets}")
+    return f"""시간대: {window}
+카테고리 수: {len(digests)}
+
+{chr(10).join(blocks)}"""
+
+
 def build_insight_prompt(caption: str, url: str, posted_at: str,
                          has_image: bool = True) -> str:
     if has_image:

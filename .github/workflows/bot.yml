@@ -4,7 +4,13 @@ on:
   schedule:
     # 10분마다. GitHub 부하 상황에 따라 수 분 밀릴 수 있다(무료 티어 특성).
     - cron: "*/10 * * * *"
-  workflow_dispatch: {}   # Actions 탭에서 수동 실행
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "실행 모드"
+        type: choice
+        default: poll
+        options: [poll, digest]
 
 # 동시 실행되면 상태 DB(botstate.sqlite3)가 꼬이므로 직렬화한다.
 concurrency:
@@ -42,6 +48,26 @@ jobs:
           # 저장되지 않아 다음 실행이 같은 뉴스를 다시 발행하게 되므로, 그 전에 스스로 끊는다.
           RUN_BUDGET_SEC: "600"
         run: python main.py --once
+
+      # 매시 정시 직후 실행분에서만 지난 1시간을 정리한다.
+      # (10분 주기라 정시 실행은 시간당 한 번뿐이고, digest_log 로 중복도 막는다)
+      - name: 시간별 다이제스트
+        if: github.event.inputs.mode == 'digest' || github.event_name == 'schedule'
+        env:
+          PYTHONUNBUFFERED: "1"
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.5-flash' }}
+          USE_TOPICS: "true"
+        run: |
+          # KST 기준 분(minute)이 10분 미만일 때만 = 매시 첫 실행
+          MIN=$(TZ=Asia/Seoul date +%-M)
+          if [[ "${{ github.event.inputs.mode }}" == "digest" || "$MIN" -lt 10 ]]; then
+            python main.py --digest
+          else
+            echo "정시 실행이 아님(분=$MIN) — 다이제스트 생략"
+          fi
 
       - name: 발행 이력 저장
         # 실패·취소되더라도 이미 발행한 것까지는 반드시 기록해야 중복 발행을 막는다.
