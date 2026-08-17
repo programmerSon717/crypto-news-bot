@@ -192,6 +192,9 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
 
     # 아직 안 본 것만 추려 미리 요약해둔다(순서 유지).
     pending = [i for i in ordered if not store.is_seen(Store.make_key(i.source, i.unique_id))]
+    # 모델 호출 한도가 빡빡하므로 **국가별 규제·정책 기사를 먼저** 처리한다.
+    # 그러지 않으면 물량이 많은 일반 기사에 밀려 국가 탭이 계속 비어 있게 된다.
+    pending.sort(key=lambda i: 0 if "/규제" in (i.region_hint or "") else 1)
     if budget:
         # 시간 상한이 걸린 실행(CI)에서는 어차피 발행 못 할 분량까지 요약하면 낭비다.
         # 발행에 건당 약 5초 걸린다고 보고 잘라낸다. 나머지는 다음 실행이 처리한다.

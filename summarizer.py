@@ -57,8 +57,14 @@ _exhausted: set[str] = set()
 
 
 def _is_quota_exhausted(msg: str) -> bool:
-    """분당 초과(잠시 후 회복)와 한도 소진(그날은 끝)을 구분한다."""
-    return "RESOURCE_EXHAUSTED" in msg and "PerDay" in msg
+    """분당 초과(잠시 후 회복)와 한도 소진(그날은 끝)을 구분한다.
+
+    분당 한도 메시지에도 'PerMinutePerProject...' 처럼 Per 가 들어가므로
+    PerDay 를 정확히 집어야 한다. 잘못 판정하면 살아 있는 모델을 배제해버린다.
+    """
+    if "RESOURCE_EXHAUSTED" not in msg:
+        return False
+    return "PerDay" in msg and "PerMinute" not in msg
 
 
 def _usable(models: list[str]) -> list[str]:
@@ -77,7 +83,9 @@ def _retry_after(msg: str) -> float:
     return 20.0
 
 # 기본 모델이 과부하(503)일 때 순서대로 시도할 대체 모델
-FALLBACK_MODELS = ["gemini-3-flash-preview", "gemini-3.1-flash-lite"]
+# 2026-08-17 실측: 3.5-flash·3-flash-preview 는 일일 한도 소진, 아래 둘은 가용.
+# 순서대로 시도한다.
+FALLBACK_MODELS = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3-flash-preview"]
 
 _config = types.GenerateContentConfig(
     system_instruction=SYSTEM_PROMPT,
