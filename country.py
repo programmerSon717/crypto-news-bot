@@ -91,14 +91,29 @@ DEST: dict[str, dict[str, str]] = {
 }
 
 
+# catch-all 탭. 전용 탭이 있는 나라의 기사가 여기 머물러선 안 된다.
+# (해외정책 탭에 미국 SEC 기사가 남아 있던 사고가 있었다)
+CATCH_ALL = {"해외정책": "policy", "Global Macro": "rates"}
+
+
 def enforce(category: str, data: dict) -> tuple[str, str | None]:
     """(보정된 카테고리, 사유). 문제가 없으면 사유는 None.
 
-    나라 전용 탭인데 본문이 다른 나라를 말하고 있으면 옮긴다.
+    - 나라 전용 탭인데 본문이 다른 나라를 말하면 옮긴다.
+    - catch-all 탭(해외정책·Global Macro)인데 전용 탭이 있는 나라면 그 탭으로 옮긴다.
     """
+    if category in CATCH_ALL:
+        found = detect(text_of(data))
+        if found is None:
+            return category, None
+        dest = DEST.get(found, {}).get(CATCH_ALL[category])
+        if dest and dest != category:
+            return dest, f"{category} → {dest} ({found} 전용 탭 있음)"
+        return category, None
+
     want = COUNTRY_TABS.get(category)
     if not want:
-        return category, None       # 이슈·해외정책·Global Macro 는 나라 제약이 없다
+        return category, None       # 이슈는 나라 제약이 없다
 
     found = detect(text_of(data))
     if found is None or found == want:
