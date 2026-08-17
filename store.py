@@ -33,7 +33,8 @@ class Store:
             # 이미 만들어진 DB에도 적용되도록 없을 때만 컬럼을 추가한다.
             cols = {r[1] for r in c.execute("PRAGMA table_info(published)")}
             # text 는 발행 원문(HTML). 나중에 다른 탭으로 옮길 때 그대로 다시 쓸 수 있다.
-            for col in ("category", "lede", "text"):
+            # extra_ids: 한 글이 사진+본문 두 메시지로 나갈 때 나머지 id(쉼표 구분)
+            for col in ("category", "lede", "text", "extra_ids"):
                 if col not in cols:
                     c.execute(f"ALTER TABLE published ADD COLUMN {col} TEXT")
             # 다이제스트 중복 발행 방지용 — 어느 구간까지 요약했는지 기록
@@ -73,26 +74,29 @@ class Store:
 
     def record_published(self, key: str, message_id: int, thread_id: int | None,
                          source_url: str, headline: str,
-                         category: str = "", lede: str = "", text: str = ""):
+                         category: str = "", lede: str = "", text: str = "",
+                         extra_ids: list | None = None):
         with self._conn() as c:
             c.execute(
                 """INSERT OR REPLACE INTO published
                    (key, message_id, thread_id, source_url, headline,
-                    published_at, category, lede, text)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                    published_at, category, lede, text, extra_ids)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (key, message_id, thread_id, source_url, headline, time.time(),
-                 category, lede, text),
+                 category, lede, text, ",".join(str(i) for i in (extra_ids or []))),
             )
 
     def all_published(self) -> list[dict]:
         with self._conn() as c:
             rows = c.execute(
-                """SELECT key, message_id, thread_id, category, headline, lede, text
+                """SELECT key, message_id, thread_id, category, headline, lede, text,
+                          extra_ids
                    FROM published ORDER BY published_at"""
             ).fetchall()
         return [
             {"key": r[0], "message_id": r[1], "thread_id": r[2], "category": r[3] or "",
-             "headline": r[4] or "", "lede": r[5] or "", "text": r[6] or ""}
+             "headline": r[4] or "", "lede": r[5] or "", "text": r[6] or "",
+             "extra_ids": [int(x) for x in (r[7] or "").split(",") if x.strip()]}
             for r in rows
         ]
 

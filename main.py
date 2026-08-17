@@ -125,6 +125,18 @@ def annotate_origin(data: dict, item: NewsItem):
         data["_posted_label"] = dt.strftime("%Y-%m-%d %H:%M KST")
 
 
+def publish_order(items: list[NewsItem]) -> list[NewsItem]:
+    """발행 순서 = 최신 → 과거.
+
+    텔레그램은 메시지 순서를 바꿀 수 없고, 보낸 순서대로 위에서 아래로 쌓인다.
+    따라서 **최신부터 보내야** 탭 위쪽에 최신 글, 아래쪽에 과거 글이 놓인다.
+    (사용자 요구: 최신은 앞으로, 과거는 뒤로)
+
+    날짜 불명은 맨 앞(최신 자리)에 둔다 — 대개 방금 올라온 공지다.
+    """
+    return sorted(items, key=lambda i: i.published_at or float("inf"), reverse=True)
+
+
 async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: bool,
                         dry_run: bool = False):
     stats: dict[str, int] = {}
@@ -132,7 +144,7 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
     started = time.monotonic()
     deferred = 0
 
-    for item in items:
+    for item in publish_order(items):
         # 시간 상한을 넘으면 남은 항목은 손대지 않고 다음 실행으로 넘긴다.
         # '본 것으로 표시'를 하기 전에 끊어야 발행 없이 유실되는 항목이 생기지 않는다.
         if budget and time.monotonic() - started > budget:
@@ -174,13 +186,15 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
             print(f"[dry-run][{cat}] 중요도{data.get('importance')} {data['headline'][:55]}")
             continue
 
-        msg_id = await publish(client, data, item.url, image_url=item.image_url)
+        msg_id = await publish(client, data, item.url,
+                               image_url=item.image_url, image=item.image)
         if msg_id:
             _, origin = publisher.origin_of(data)
+            ids = [i for i in data.get("_message_ids", []) if i != msg_id]
             store.record_published(key, msg_id, topics_thread_id(cat),
                                    origin or item.url, data["headline"],
                                    category=cat, lede=data.get("lede", ""),
-                                   text=data.get("_rendered", ""))
+                                   text=data.get("_rendered", ""), extra_ids=ids)
         await asyncio.sleep(3)  # 텔레그램 rate limit 여유
 
     total = sum(stats.values())
@@ -262,7 +276,7 @@ async def main():
             if not items:
                 # 공개 채널이 아니면 웹 미리보기가 비어 나온다 → 개인 계정 경로로 재시도
                 items = await telegram_channels.fetch_since(start)
-            items.sort(key=lambda i: i.published_at or 0)  # 시간순 발행
+            items = publish_order(items)   # 과거 → 최신 순 발행
             withpic = sum(1 for i in items if i.image)
             print(f"[TG백필] 대상 {len(items)}건 (이미지 포함 {withpic}건)"
                   f"{' — dry-run: 발행하지 않음' if dry_run else ''}")
@@ -275,7 +289,7 @@ async def main():
             # RSS는 최신 몇 건만 주므로 블록미디어는 사이트맵으로 당일 전체를 보강
             items += await blockmedia_archive.fetch_date(client, since)
             items = filter_since(items, since)
-            items.sort(key=lambda i: i.published_at or 0)  # 시간순 발행
+            items = publish_order(items)   # 과거 → 최신 순 발행
             print(f"[백필] 대상 {len(items)}건"
                   f"{' (dry-run: 발행하지 않음)' if dry_run else ''}")
             await process_items(client, items, warm=False, dry_run=dry_run)

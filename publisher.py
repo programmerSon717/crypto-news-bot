@@ -37,11 +37,11 @@ def render(data: dict, url: str) -> str:
     lede = field("lede", "☑️")
     comment = field("comment", "🐧")
 
-    parts = [
-        f"{data.get('header_emoji', '📰')} <b>{e(data['headline'])}</b>",
-        "",
-        f"☑️ {e(lede)}",
+    # 사진 캡션에 이미 제목이 들어간 경우엔 본문에서 제목을 뺀다(중복 방지).
+    parts = [] if data.get("_headline_in_caption") else [
+        f"{data.get('header_emoji', '📰')} <b>{e(data['headline'])}</b>", ""
     ]
+    parts += [f"☑️ {e(lede)}"]
 
     # 퍼온 글은 원 게시자가 실제로 뭐라고 썼는지를 그대로 보여준다.
     origin_text = (data.get("origin_text") or "").strip()
@@ -75,7 +75,7 @@ def render(data: dict, url: str) -> str:
 
     # 실시간이 아닌 글(백필 등)은 언제 올라온 글인지 밝혀준다.
     posted = data.get("_posted_label")
-    if posted:
+    if posted and not data.get("_headline_in_caption"):   # 캡션에 이미 넣었으면 생략
         parts += [f"🕒 {e(posted)} 게시", ""]
 
     parts += [_source_line(data, url), "", e(tags)]
@@ -140,46 +140,86 @@ async def delete(client: httpx.AsyncClient, message_id: int) -> bool:
     return bool(r.json().get("ok"))
 
 
+CAPTION_LIMIT = 1024   # 텔레그램 사진 캡션 상한
+
+
+def render_caption(data: dict) -> str:
+    """사진에 붙일 짧은 캡션. 제목 + 게시시각 + 출처만."""
+    e = html.escape
+    parts = [f"{data.get('header_emoji', '📰')} <b>{e(data['headline'])}</b>"]
+    posted = data.get("_posted_label")
+    if posted:
+        parts += ["", f"🕒 {e(posted)} 게시"]
+    return "\n".join(parts)
+
+
 async def publish(client: httpx.AsyncClient, data: dict, url: str,
-                  image_url: str = "") -> int | None:
+                  image_url: str = "", image: bytes | None = None) -> int | None:
     """발행하고 message_id 를 돌려준다. 실패하면 None.
 
-    캡처 이미지가 있으면 링크 미리보기로 본문 위에 띄운다. sendPhoto 는 캡션이
-    1024자로 제한돼 인사이트 본문이 잘리므로 쓰지 않는다.
+    캡처가 있으면 **사진을 실제로 업로드**한다. 링크 미리보기로 띄우면 텔레그램이
+    렌더링을 건너뛰는 경우가 있어 이미지가 아예 안 보인다.
+    사진 캡션은 1024자 제한이라 본문을 담을 수 없으므로, 사진(제목만) → 본문(답글)
+    두 개로 나눠 보낸다. 답글로 묶여 화면에서는 한 덩어리로 보인다.
     """
+    category = data.get("category")
+    thread_id = topics.thread_id_for(category) if category else None
+    where = f"[{category}]" if thread_id else ""
+
+    photo_id = None
+    if image:
+        photo_id = await _send_photo(client, image, render_caption(data), thread_id)
+        if photo_id is None:
+            print("[publisher] 사진 업로드 실패 — 본문만 발행합니다")
+
+    data["_headline_in_caption"] = photo_id is not None
     text = render(data, url)
     data["_rendered"] = text   # 나중에 다른 탭으로 옮길 때 그대로 재사용
+
     payload = {
         "chat_id": settings.telegram_channel_id,
         "text": text,
         "parse_mode": "HTML",
+        # 본문에 남은 링크(출처 등)로 미리보기 카드가 붙으면 사진과 겹쳐 지저분해진다.
+        "link_preview_options": {"is_disabled": True},
     }
-
-    if image_url:
-        payload["link_preview_options"] = {
-            "url": image_url,
-            "prefer_large_media": True,
-            "show_above_text": True,
-        }
-    elif data.get("_repost"):
-        # 이미지가 없으면 텔레그램이 본문의 링크(=퍼온 채널)로 미리보기 카드를 만든다.
-        # 카드에 채널 이름이 박혀 출처가 그쪽으로 보이므로 아예 끈다.
-        payload["link_preview_options"] = {"is_disabled": True}
-    else:
-        payload["disable_web_page_preview"] = False
-
-    # 카테고리에 해당하는 탭(토픽)으로 라우팅. 토픽 미사용이면 그대로 본문에 발행.
-    category = data.get("category")
-    thread_id = topics.thread_id_for(category) if category else None
     if thread_id:
         payload["message_thread_id"] = thread_id
+    if photo_id:
+        payload["reply_parameters"] = {"message_id": photo_id}
 
-    r = await client.post(API, json=payload, timeout=20)
+    r = await client.post(API, json=payload, timeout=30)
     if r.status_code != 200:
         print(f"[publisher] 발행 실패: {r.status_code} {r.text[:200]}")
-        return None
+        return photo_id
 
-    where = f"[{category}]" if thread_id else ""
-    pic = " +캡처" if image_url else ""
+    body_id = r.json().get("result", {}).get("message_id")
+    # 사진과 본문 두 개로 나갔으면 둘 다 지울 수 있어야 한다
+    data["_message_ids"] = [i for i in (photo_id, body_id) if i]
+
+    pic = " +캡처" if photo_id else ""
     print(f"[publisher] 발행 완료{where}{pic}: {data['headline'][:50]}")
+    # 사진이 먼저 올라갔으면 그게 이 글의 시작점이다
+    return photo_id or body_id
+
+
+async def _send_photo(client: httpx.AsyncClient, image: bytes, caption: str,
+                      thread_id: int | None) -> int | None:
+    data = {
+        "chat_id": str(settings.telegram_channel_id),
+        "caption": caption[:CAPTION_LIMIT],
+        "parse_mode": "HTML",
+    }
+    if thread_id:
+        data["message_thread_id"] = str(thread_id)
+
+    r = await client.post(
+        f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendPhoto",
+        data=data,
+        files={"photo": ("capture.jpg", image, "image/jpeg")},
+        timeout=60,
+    )
+    if r.status_code != 200:
+        print(f"[publisher] 사진 전송 실패: {r.status_code} {r.text[:200]}")
+        return None
     return r.json().get("result", {}).get("message_id")
