@@ -32,6 +32,35 @@ client = genai.Client(
 # 라이브러리 단 타임아웃이 안 먹는 경우를 대비한 상한(초).
 CALL_TIMEOUT = 120
 
+# 무료 티어는 모델당 분당 15건이다. 넘기면 429 로 실패하고 그 항목은 유실된다.
+# 여유를 두고 12건/분으로 스스로 제한한다.
+RATE_LIMIT_RPM = 12
+_MIN_GAP = 60.0 / RATE_LIMIT_RPM
+_gate = asyncio.Lock()
+_last_call = 0.0
+
+
+async def _throttle():
+    """호출 간격을 벌려 분당 한도를 넘지 않게 한다."""
+    global _last_call
+    async with _gate:
+        now = asyncio.get_running_loop().time()
+        wait = _MIN_GAP - (now - _last_call)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _last_call = asyncio.get_running_loop().time()
+
+
+def _retry_after(msg: str) -> float:
+    """429 응답에 담긴 대기 시간을 뽑아낸다. 없으면 기본값."""
+    m = re.search(r"retry in ([0-9.]+)s", msg) or re.search(r"'retryDelay': '(\d+)s'", msg)
+    if m:
+        try:
+            return min(float(m.group(1)) + 2, 90)
+        except ValueError:
+            pass
+    return 20.0
+
 # 기본 모델이 과부하(503)일 때 순서대로 시도할 대체 모델
 FALLBACK_MODELS = ["gemini-3-flash-preview", "gemini-3.1-flash-lite"]
 
@@ -60,7 +89,8 @@ def _retryable(err: Exception, msg: str) -> bool:
     """
     if isinstance(err, (TimeoutError, asyncio.TimeoutError)):
         return True
-    return "503" in msg or "429" in msg or "UNAVAILABLE" in msg
+    return ("503" in msg or "429" in msg or "UNAVAILABLE" in msg
+            or "RESOURCE_EXHAUSTED" in msg)
 
 
 def _extract_json(text: str) -> dict:
@@ -117,6 +147,7 @@ async def generate_json(system_prompt: str, user_prompt: str,
     for model in [settings.gemini_model, *FALLBACK_MODELS]:
         for attempt in range(3):
             try:
+                await _throttle()
                 return _extract_json(
                     await asyncio.wait_for(asyncio.to_thread(_call, model), CALL_TIMEOUT)
                 )
@@ -124,7 +155,9 @@ async def generate_json(system_prompt: str, user_prompt: str,
                 last_err = e
                 msg = str(e)
                 if _retryable(e, msg):
-                    await asyncio.sleep(2 * (attempt + 1))
+                    delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \
+                        else 2 * (attempt + 1)
+                    await asyncio.sleep(delay)
                     continue
                 break
 
@@ -147,6 +180,7 @@ async def summarize_insight(item: NewsItem, posted_at: str) -> dict | None:
     for model in models:
         for attempt in range(3):
             try:
+                await _throttle()
                 text = await asyncio.wait_for(
                     asyncio.to_thread(_generate_vision_sync, model, user_prompt,
                                       item.image, item.image_mime),
@@ -161,7 +195,9 @@ async def summarize_insight(item: NewsItem, posted_at: str) -> dict | None:
                 last_err = e
                 msg = str(e)
                 if _retryable(e, msg):
-                    await asyncio.sleep(2 * (attempt + 1))
+                    delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \
+                        else 2 * (attempt + 1)
+                    await asyncio.sleep(delay)
                     continue
                 break
 
@@ -180,6 +216,7 @@ async def summarize(item: NewsItem) -> dict | None:
     for model in models:
         for attempt in range(3):
             try:
+                await _throttle()
                 text = await asyncio.wait_for(
                     asyncio.to_thread(_generate_sync, model, user_prompt), CALL_TIMEOUT
                 )
@@ -192,7 +229,9 @@ async def summarize(item: NewsItem) -> dict | None:
                 msg = str(e)
                 # 과부하/레이트리밋이면 잠시 쉬었다 재시도, 그 외 오류는 다음 모델로
                 if _retryable(e, msg):
-                    await asyncio.sleep(2 * (attempt + 1))
+                    delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \
+                        else 2 * (attempt + 1)
+                    await asyncio.sleep(delay)
                     continue
                 break  # 파싱 실패 등 → 다음 모델 시도
 

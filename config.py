@@ -77,6 +77,13 @@ class Settings:
         ("CFTC 보도자료", "https://www.cftc.gov/RSS/RSSGP/rssgp.xml", "미국"),
         ("연준 보도자료", "https://www.federalreserve.gov/feeds/press_all.xml", "미국"),
         # 해외
+        # 로이터는 2020년 자체 RSS 를 폐지했다. 구글뉴스 검색 피드로 우회한다.
+        ("로이터(크립토)",
+         "https://news.google.com/rss/search?q=site%3Areuters.com%20crypto%20OR%20bitcoin%20OR%20cryptocurrency&hl=en-US&gl=US&ceid=US%3Aen",
+         "해외"),
+        ("로이터(규제)",
+         "https://news.google.com/rss/search?q=site%3Areuters.com%20crypto%20regulation%20OR%20SEC%20OR%20stablecoin&hl=en-US&gl=US&ceid=US%3Aen",
+         "해외"),
         ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/", "해외"),
         ("Bitcoin.com", "https://news.bitcoin.com/feed/", "해외"),
         ("CryptoSlate", "https://cryptoslate.com/feed/", "해외"),

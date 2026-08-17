@@ -146,7 +146,9 @@ def publish_order(items: list[NewsItem]) -> list[NewsItem]:
     return sorted(items, key=lambda i: i.published_at or float("inf"))
 
 
-SUMMARY_CONCURRENCY = 4   # 모델 호출 동시 실행 수. 무료 티어 레이트리밋을 고려한 값.
+# 무료 티어는 분당 15건이다. summarizer 가 12건/분으로 스로틀하므로
+# 동시 실행을 늘려도 처리량은 안 늘고 429만 늘어난다.
+SUMMARY_CONCURRENCY = 2
 
 
 async def _summarize_one(item: NewsItem) -> dict | None:
