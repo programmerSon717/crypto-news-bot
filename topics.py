@@ -31,6 +31,11 @@ CATEGORIES = {
     "UAE Policy": ("UAE Policy", 0x8EEE98),
     "Vietnam Policy": ("Vietnam Policy", 0xFFD67E),
     "해외정책": ("해외정책", 0xFFD67E),
+    # 금리·증시는 정책과 시장 사이에 걸쳐 있어 '이슈'에 묻히기 쉬우므로 따로 뺀다.
+    "Korea Rates": ("Korea Rates", 0x6FB9F0),
+    "US Rates": ("US Rates", 0xFB6F5F),
+    "Korea Equities": ("Korea Equities", 0x6FB9F0),
+    "US Equities": ("US Equities", 0xFB6F5F),
     "이슈": ("이슈", 0xCB86DB),
 }
 

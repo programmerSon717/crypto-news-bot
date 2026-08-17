@@ -41,6 +41,19 @@ def render(data: dict, url: str) -> str:
         f"{data.get('header_emoji', '📰')} <b>{e(data['headline'])}</b>",
         "",
         f"☑️ {e(lede)}",
+    ]
+
+    # 퍼온 글은 원 게시자가 실제로 뭐라고 썼는지를 그대로 보여준다.
+    origin_text = (data.get("origin_text") or "").strip()
+    if origin_text:
+        author, _ = origin_of(data)
+        parts += ["", f"🗣 <b>{e(author)} 원문</b>",
+                  f"<blockquote expandable>{e(origin_text)}</blockquote>"]
+        ko = (data.get("origin_text_ko") or "").strip()
+        if ko:
+            parts += [f"<blockquote expandable>{e(ko)}</blockquote>"]
+
+    parts += [
         "",
         f"📁 <b>{e(data.get('section_title', '주요내용'))}</b>",
         f"<blockquote>{bullets}</blockquote>",
@@ -100,6 +113,33 @@ def _source_line(data: dict, url: str) -> str:
     return f"📎 출처: {e(label)}"
 
 
+async def send_raw(client: httpx.AsyncClient, text: str,
+                   thread_id: int | None) -> int | None:
+    """이미 만들어진 본문을 그대로 발행한다(탭 이동 등 재발행용)."""
+    payload = {
+        "chat_id": settings.telegram_channel_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "link_preview_options": {"is_disabled": True},
+    }
+    if thread_id:
+        payload["message_thread_id"] = thread_id
+    r = await client.post(API, json=payload, timeout=20)
+    if r.status_code != 200:
+        print(f"[publisher] 재발행 실패: {r.status_code} {r.text[:200]}")
+        return None
+    return r.json().get("result", {}).get("message_id")
+
+
+async def delete(client: httpx.AsyncClient, message_id: int) -> bool:
+    r = await client.post(
+        f"https://api.telegram.org/bot{settings.telegram_bot_token}/deleteMessage",
+        json={"chat_id": settings.telegram_channel_id, "message_id": message_id},
+        timeout=15,
+    )
+    return bool(r.json().get("ok"))
+
+
 async def publish(client: httpx.AsyncClient, data: dict, url: str,
                   image_url: str = "") -> int | None:
     """발행하고 message_id 를 돌려준다. 실패하면 None.
@@ -108,6 +148,7 @@ async def publish(client: httpx.AsyncClient, data: dict, url: str,
     1024자로 제한돼 인사이트 본문이 잘리므로 쓰지 않는다.
     """
     text = render(data, url)
+    data["_rendered"] = text   # 나중에 다른 탭으로 옮길 때 그대로 재사용
     payload = {
         "chat_id": settings.telegram_channel_id,
         "text": text,

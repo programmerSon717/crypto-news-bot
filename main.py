@@ -80,6 +80,10 @@ def normalize_category(cat: str | None) -> str:
         "홍콩정책": "Hong Kong Policy", "싱가포르정책": "Singapore Policy",
         "싱가폴정책": "Singapore Policy", "uae정책": "UAE Policy",
         "베트남정책": "Vietnam Policy", "국내": "국내정책", "해외": "해외정책",
+        "한국금리": "Korea Rates", "미국금리": "US Rates",
+        "한국증시": "Korea Equities", "미국증시": "US Equities",
+        "korea rate": "Korea Rates", "us rate": "US Rates",
+        "korea equity": "Korea Equities", "us equity": "US Equities",
     }
     if lowered in aliases:
         return aliases[lowered]
@@ -175,7 +179,8 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
             _, origin = publisher.origin_of(data)
             store.record_published(key, msg_id, topics_thread_id(cat),
                                    origin or item.url, data["headline"],
-                                   category=cat, lede=data.get("lede", ""))
+                                   category=cat, lede=data.get("lede", ""),
+                                   text=data.get("_rendered", ""))
         await asyncio.sleep(3)  # 텔레그램 rate limit 여유
 
     total = sum(stats.values())
@@ -238,6 +243,13 @@ async def main():
         if do_digest:
             import digest
             await digest.run(client, store, hours=digest_hours, dry_run=dry_run)
+            return
+
+        if "--reroute" in sys.argv:
+            import reroute
+            only = _arg_value("--only")
+            await reroute.run(client, store, dry_run=dry_run,
+                              only={c.strip() for c in only.split(",")} if only else None)
             return
 
         if tg_since:

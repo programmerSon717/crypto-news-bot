@@ -7,5 +7,9 @@
   "Hong Kong Policy": 61,
   "Singapore Policy": 62,
   "UAE Policy": 63,
-  "Vietnam Policy": 64
+  "Vietnam Policy": 64,
+  "Korea Rates": 188,
+  "US Rates": 189,
+  "Korea Equities": 190,
+  "US Equities": 191
 }

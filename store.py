@@ -32,7 +32,8 @@ class Store:
             # 시간별 다이제스트를 만들려면 헤드라인만으로는 부족해 분류·요약문도 남긴다.
             # 이미 만들어진 DB에도 적용되도록 없을 때만 컬럼을 추가한다.
             cols = {r[1] for r in c.execute("PRAGMA table_info(published)")}
-            for col in ("category", "lede"):
+            # text 는 발행 원문(HTML). 나중에 다른 탭으로 옮길 때 그대로 다시 쓸 수 있다.
+            for col in ("category", "lede", "text"):
                 if col not in cols:
                     c.execute(f"ALTER TABLE published ADD COLUMN {col} TEXT")
             # 다이제스트 중복 발행 방지용 — 어느 구간까지 요약했는지 기록
@@ -72,15 +73,35 @@ class Store:
 
     def record_published(self, key: str, message_id: int, thread_id: int | None,
                          source_url: str, headline: str,
-                         category: str = "", lede: str = ""):
+                         category: str = "", lede: str = "", text: str = ""):
         with self._conn() as c:
             c.execute(
                 """INSERT OR REPLACE INTO published
                    (key, message_id, thread_id, source_url, headline,
-                    published_at, category, lede)
-                   VALUES (?,?,?,?,?,?,?,?)""",
+                    published_at, category, lede, text)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
                 (key, message_id, thread_id, source_url, headline, time.time(),
-                 category, lede),
+                 category, lede, text),
+            )
+
+    def all_published(self) -> list[dict]:
+        with self._conn() as c:
+            rows = c.execute(
+                """SELECT key, message_id, thread_id, category, headline, lede, text
+                   FROM published ORDER BY published_at"""
+            ).fetchall()
+        return [
+            {"key": r[0], "message_id": r[1], "thread_id": r[2], "category": r[3] or "",
+             "headline": r[4] or "", "lede": r[5] or "", "text": r[6] or ""}
+            for r in rows
+        ]
+
+    def update_published_location(self, key: str, message_id: int,
+                                  thread_id: int | None, category: str):
+        with self._conn() as c:
+            c.execute(
+                "UPDATE published SET message_id=?, thread_id=?, category=? WHERE key=?",
+                (message_id, thread_id, category, key),
             )
 
     def published_between(self, start: float, end: float) -> list[dict]:
