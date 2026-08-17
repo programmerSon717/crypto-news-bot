@@ -36,6 +36,11 @@ CATEGORIES = {
     "US Rates": ("US Rates", 0xFB6F5F),
     "Korea Equities": ("Korea Equities", 0x6FB9F0),
     "US Equities": ("US Equities", 0xFB6F5F),
+    # 중국은 물량이 많아 따로 뺀다(인민은행·위안화·규제·상하이/항셍 전부).
+    "China": ("China", 0xFB6F5F),
+    # 미국·한국·중국이 아닌 나라의 거시지표·통화정책(일본은행, ECB 등).
+    # 이 탭이 없으면 모델이 갈 곳 없는 뉴스를 US Rates 에 억지로 밀어넣는다.
+    "Global Macro": ("Global Macro", 0xCB86DB),
     "이슈": ("이슈", 0xCB86DB),
 }
 

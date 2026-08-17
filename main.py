@@ -24,6 +24,7 @@ import httpx
 
 from collectors import (binance, upbit, rss, telegram_channels, tg_web,
                         blockmedia_archive, coin68)
+import country
 from config import settings
 from models import NewsItem
 import publisher
@@ -87,6 +88,8 @@ def normalize_category(cat: str | None) -> str:
         "한국증시": "Korea Equities", "미국증시": "US Equities",
         "korea rate": "Korea Rates", "us rate": "US Rates",
         "korea equity": "Korea Equities", "us equity": "US Equities",
+        "global macro": "Global Macro", "글로벌거시": "Global Macro",
+        "중국": "China", "china": "China", "china policy": "China",
     }
     if lowered in aliases:
         return aliases[lowered]
@@ -98,7 +101,7 @@ def normalize_category(cat: str | None) -> str:
 FRESH_SEC = 3 * 3600
 
 # 시장 지표 탭. 근거를 확인할 수 있는 언론 보도만 싣는다(커뮤니티 시황 코멘트 제외).
-MARKET_TABS = {"Korea Rates", "US Rates", "Korea Equities", "US Equities"}
+MARKET_TABS = country.MARKET_TABS
 
 
 def is_repost(item: NewsItem) -> bool:
@@ -228,6 +231,10 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
             continue
 
         cat = normalize_category(data.get("category"))
+        # 프롬프트가 나라를 틀리는 경우가 있어 코드로 한 번 더 강제한다
+        cat, why = country.enforce(cat, data)
+        if why:
+            print(f"[분류보정] {why}: {data.get('headline','')[:45]}")
         if cat in MARKET_TABS and is_repost(item):
             # 금리·증시 탭은 객관성이 중요해 언론 보도만 싣는다.
             # 개인 커뮤니티에서 퍼온 시황 코멘트는 근거를 확인할 수 없어 제외.

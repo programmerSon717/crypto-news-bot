@@ -13,6 +13,7 @@ import asyncio
 
 import httpx
 
+import country
 import publisher
 import topics
 from prompts import build_reroute_prompt, REROUTE_SYSTEM_PROMPT
@@ -62,6 +63,12 @@ async def run(client: httpx.AsyncClient, store, dry_run: bool = False,
         if not new_cat or new_cat == row["category"]:
             unchanged += 1
             continue
+        # 모델 판정에도 국가 보정을 적용한다(프롬프트만으로는 나라를 틀린다)
+        fixed, why = country.enforce(new_cat, {"headline": row["headline"],
+                                               "lede": row["lede"], "bullets": []})
+        if why:
+            print(f"     보정: {why}")
+            new_cat = fixed
         if new_cat not in topics.CATEGORIES:
             print(f"  [무시] 알 수 없는 분류 '{new_cat}': {row['headline'][:40]}")
             unchanged += 1

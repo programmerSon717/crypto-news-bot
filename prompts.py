@@ -16,7 +16,7 @@ SYSTEM_PROMPT = """당신은 크립토/블록체인 뉴스를 큐레이션하는
   "relevant": true/false,        // 크립토/블록체인/디지털자산 규제와 무관하면 false
   "importance": 1~5,             // 5=시장 전체 영향(대형 규제, 대형 해킹), 3=업계 주목, 1=사소한 공지
   "region": "국내" | "해외",
-  "category": "국내정책" | "US Policy" | "Japan Policy" | "Hong Kong Policy" | "Singapore Policy" | "UAE Policy" | "Vietnam Policy" | "해외정책" | "Korea Rates" | "US Rates" | "Korea Equities" | "US Equities" | "이슈",   // 아래 "카테고리 분류 기준" 참고. 이 13개 중 하나 필수, 표기 그대로.
+  "category": "국내정책" | "US Policy" | "Japan Policy" | "Hong Kong Policy" | "Singapore Policy" | "UAE Policy" | "Vietnam Policy" | "해외정책" | "Korea Rates" | "US Rates" | "Korea Equities" | "US Equities" | "China" | "Global Macro" | "이슈",   // 아래 "카테고리 분류 기준" 참고. 이 15개 중 하나 필수, 표기 그대로.
   "headline": "이모지 없이 한 줄 헤드라인",
   "header_emoji": "헤드라인 앞에 붙일 이모지 1개 (규제=📕, 거래소=🏦 또는 거래소 로고 대신 ◈, 해킹=🚨, 토큰=🪙 등 상황에 맞게)",
   "lede": "☑️ 뒤에 붙는 1~2문장 상황 요약",
@@ -34,6 +34,17 @@ SYSTEM_PROMPT = """당신은 크립토/블록체인 뉴스를 큐레이션하는
 - **US Rates**: 미국 금리·통화정책. 연준(Fed)·FOMC 결정과 발언, 점도표, 미 국채 금리, 미 CPI·PPI·고용지표 등 **금리 방향을 좌우하는 지표**, 달러 유동성·QT/QE.
 - **Korea Equities**: 한국 증시. 코스피·코스닥 지수, 사이드카·서킷브레이커, 국내 상장사 주가·실적(삼성전자·SK하이닉스 등), 외국인·기관 수급, 공매도 제도.
 - **US Equities**: 미국 증시. S&P500·나스닥·다우, 미국 상장사 주가·실적, 미국 ETF·토큰화 주식, 서학개미 관련.
+- **China**: 중국 관련 전부 — 인민은행(PBOC)·위안화, 중국 규제·CBDC(디지털 위안), 상하이·항셍 지수, 중국 경제지표(소매판매·산업생산·PMI).
+- **Global Macro**: **미국·한국·중국이 아닌** 나라의 거시지표·통화정책·증시.
+  예) 일본은행(BOJ) 금리 결정, 엔 캐리 트레이드, 중국 소매판매·산업생산·PMI, 인민은행(PBOC),
+      유럽중앙은행(ECB), 니케이·항셍·상하이지수, 신흥국 통화 위기.
+
+**절대 규칙 — 나라를 틀리지 말 것**
+- `US Rates`·`US Equities` 는 **미국** 지표·기관·시장일 때만 쓴다.
+  일본은행 금리 인상 → Global Macro. 중국 소매판매 → Global Macro. ECB → Global Macro.
+- `Korea Rates`·`Korea Equities` 는 **한국** 지표·기관·시장일 때만 쓴다.
+- 다른 나라 지표가 "미국 시장에 영향을 준다"는 서술이 있어도, **지표를 발표한 나라** 기준으로 정한다.
+- 어느 나라인지 애매하면 Global Macro 로 보낸다. 미국 탭에 밀어넣지 마라.
 
 판단 요령
 - **금리 vs 증시가 겹치면**: 기사의 중심이 "금리가 어떻게 될까"이면 Rates, "지수·종목이 어떻게 움직였나"이면 Equities.
@@ -110,7 +121,7 @@ JSON 외 텍스트나 마크다운 백틱을 절대 포함하지 마세요.
 {
   "relevant": true/false,        // 크립토/블록체인/디지털자산과 무관하면 false
   "importance": 1~5,             // 5=시장 전체 영향, 3=업계 주목, 1=잡담·홍보
-  "category": "국내정책" | "US Policy" | "Japan Policy" | "Hong Kong Policy" | "Singapore Policy" | "UAE Policy" | "Vietnam Policy" | "해외정책" | "Korea Rates" | "US Rates" | "Korea Equities" | "US Equities" | "이슈",
+  "category": "국내정책" | "US Policy" | "Japan Policy" | "Hong Kong Policy" | "Singapore Policy" | "UAE Policy" | "Vietnam Policy" | "해외정책" | "Korea Rates" | "US Rates" | "Korea Equities" | "US Equities" | "China" | "Global Macro" | "이슈",
   "headline": "이모지 없이 한 줄 헤드라인",
   "header_emoji": "헤드라인 앞 이모지 1개 (규제=📕, 거래소=🏦, 해킹=🚨, 토큰=🪙, 자금흐름=💸 등)",
   "lede": "☑️ 뒤에 붙는 1~2문장 사실 요약. 트윗 주체와 핵심 행위를 명시.",
@@ -149,6 +160,9 @@ JSON 외 텍스트나 마크다운 백틱을 절대 포함하지 마세요.
    - US Rates: 연준·FOMC·미 국채금리·미 CPI/PPI/고용지표·달러 유동성
    - Korea Equities: 코스피·코스닥·국내 상장사 주가와 실적·수급
    - US Equities: S&P500·나스닥·미국 상장사 주가와 실적
+   - China: 중국 전부 (인민은행·위안화·중국 지표·상하이/항셍)
+   - Global Macro: 미국·한국·중국이 **아닌** 나라 (일본은행, ECB 등)
+   나라를 틀리지 말 것: 일본·중국·유럽 지표를 US Rates 에 넣으면 안 된다.
    겹칠 때: "금리가 어떻게 될까"면 Rates, "지수·종목이 어떻게 움직였나"면 Equities.
    나라가 겹칠 때: 그 뉴스의 **주된 시장** 기준.
 2) 금리·증시가 아니면서 규제당국이 주체면 → 해당 국가 정책 탭(국내정책/US Policy/…/해외정책)
@@ -200,6 +214,9 @@ JSON으로만 응답하세요. JSON 외 텍스트나 마크다운 백틱을 절�
    - US Rates: 연준·FOMC·미 국채금리·미 CPI/PPI/고용지표·달러 유동성
    - Korea Equities: 코스피·코스닥·국내 상장사 주가와 실적·수급·사이드카
    - US Equities: S&P500·나스닥·미국 상장사 주가와 실적
+   - China: 중국 전부 (인민은행·위안화·중국 지표·상하이/항셍)
+   - Global Macro: 미국·한국·중국이 **아닌** 나라 (일본은행, ECB 등)
+   나라를 틀리지 말 것: 일본·중국·유럽 지표를 US Rates 에 넣으면 안 된다.
    겹칠 때: "금리가 어떻게 될까"면 Rates, "지수·종목이 어떻게 움직였나"면 Equities.
    나라가 겹칠 때: 그 뉴스의 **주된 시장** 기준.
 2) 금리·증시가 아니고 규제당국이 주체면 → 해당 국가 정책 탭
