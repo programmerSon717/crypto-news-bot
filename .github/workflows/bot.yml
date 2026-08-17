@@ -42,6 +42,8 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.7-flash' }}
           MIN_IMPORTANCE: ${{ vars.MIN_IMPORTANCE || '4' }}
+          # 과거 기사는 끌어오지 않는다 — 최신만 발행
+          MAX_AGE_HOURS: ${{ vars.MAX_AGE_HOURS || '12' }}
           USE_TOPICS: "true"
           # 한 번 실행에서 쓸 수 있는 시간 상한(초). 이 시간을 넘기면 남은 항목은
           # 다음 실행으로 미룬다. job 타임아웃에 걸려 통째로 취소되면 발행 이력이

@@ -134,6 +134,14 @@ def annotate_origin(data: dict, item: NewsItem):
     data["_posted_label"] = dt.strftime("%Y-%m-%d %H:%M KST")
 
 
+def is_stale(item: NewsItem) -> bool:
+    """설정한 시간보다 오래된 기사인가. 날짜 불명은 최신으로 본다(공지 등)."""
+    limit = settings.max_age_hours
+    if not limit or item.published_at is None:
+        return False
+    return datetime.now(tz=KST).timestamp() - item.published_at > limit * 3600
+
+
 def publish_order(items: list[NewsItem]) -> list[NewsItem]:
     """발행 순서 = 과거 → 최신.
 
@@ -189,9 +197,12 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
     deferred = 0
 
     ordered = publish_order(items)
+    stale = 0
 
-    # 아직 안 본 것만 추려 미리 요약해둔다(순서 유지).
-    pending = [i for i in ordered if not store.is_seen(Store.make_key(i.source, i.unique_id))]
+    # 아직 안 본 것만 추려 미리 요약해둔다(순서 유지). 오래된 건 요약도 하지 않는다.
+    pending = [i for i in ordered
+               if not store.is_seen(Store.make_key(i.source, i.unique_id))
+               and not is_stale(i)]
     # 모델 호출 한도가 빡빡하므로 **국가별 규제·정책 기사를 먼저** 처리한다.
     # 그러지 않으면 물량이 많은 일반 기사에 밀려 국가 탭이 계속 비어 있게 된다.
     pending.sort(key=lambda i: 0 if "/규제" in (i.region_hint or "") else 1)
@@ -224,6 +235,11 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         if not dry_run:
             store.mark_seen(key, item.source, item.title)
         if warm:
+            continue
+
+        # 오래된 기사는 발행하지 않는다(위에서 '본 것'으로 기록했으니 다시 잡히지 않는다).
+        if is_stale(item):
+            stale += 1
             continue
 
         # 미리 병렬로 돌려둔 결과를 쓴다. 없으면(단건 경로) 그 자리에서 처리.
@@ -272,6 +288,8 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         print(f"\n[집계] 발행대상 {total}건 — {dist}")
     if deferred:
         print(f"[집계] 시간 상한({budget}초) 도달 — {deferred}건은 다음 실행으로 미룸")
+    if stale:
+        print(f"[집계] {settings.max_age_hours}시간 초과된 과거 기사 {stale}건 제외")
 
 
 async def recent_tg_web(client: httpx.AsyncClient, hours: int = 6) -> list[NewsItem]:
