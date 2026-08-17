@@ -126,12 +126,12 @@ def annotate_origin(data: dict, item: NewsItem):
     if item.origin_url:
         data["origin_url"] = item.origin_url
 
+    # 기사·문서의 발행 시각은 **항상** 표기한다(사용자 요청).
+    # 실시간이든 백필이든 언제 나온 뉴스인지 알 수 있어야 한다.
     if item.published_at is None:
         return
-    age = datetime.now(tz=KST).timestamp() - item.published_at
-    if age > FRESH_SEC:
-        dt = datetime.fromtimestamp(item.published_at, KST)
-        data["_posted_label"] = dt.strftime("%Y-%m-%d %H:%M KST")
+    dt = datetime.fromtimestamp(item.published_at, KST)
+    data["_posted_label"] = dt.strftime("%Y-%m-%d %H:%M KST")
 
 
 def publish_order(items: list[NewsItem]) -> list[NewsItem]:

@@ -69,10 +69,47 @@ class Settings:
         ("규제:UAE", "UAE OR Dubai crypto regulation VARA OR ADGM when:7d", "en-US", "US", "US:en", "UAE/규제"),
         ("규제:베트남", "quy định tài sản số OR crypto Việt Nam when:7d", "vi", "VN", "VN:vi", "베트남/규제"),
         ("규제:중국", "China crypto regulation PBOC OR digital yuan when:7d", "en-US", "US", "US:en", "중국/규제"),
+        # 아래는 RSS 가 없는 매체를 site: 검색으로 대체한 것.
+        # (Decenter·The Block·CoinDesk 규제·Blockhead·BlockBeats·Odaily·Caixin·
+        #  Foresight News·VIR — 전부 피드 경로 탐색 실패)
+        ("Decenter", "site:decenter.kr 가상자산 OR 디지털자산 OR 스테이블코인 when:7d", "ko", "KR", "KR:ko", "한국/규제"),
+        ("CoinDesk 규제", "site:coindesk.com regulation OR SEC OR policy when:7d", "en-US", "US", "US:en", "미국/규제"),
+        ("The Block", "site:theblock.co regulation OR policy OR SEC when:7d", "en-US", "US", "US:en", "미국/규제"),
+        ("Blockhead", "site:blockhead.co MAS OR regulation OR tokenisation when:7d", "en-US", "US", "US:en", "싱가포르/규제"),
+        ("BlockBeats", "site:theblockbeats.info 香港 OR 监管 OR 稳定币 when:7d", "zh-CN", "CN", "CN:zh-Hans", "중국/규제"),
+        ("Odaily", "site:odaily.news 监管 OR 稳定币 OR 香港 when:7d", "zh-CN", "CN", "CN:zh-Hans", "중국/규제"),
+        ("Caixin", "site:caixin.com 央行 OR 数字人民币 OR 加密 when:7d", "zh-CN", "CN", "CN:zh-Hans", "중국/규제"),
+        ("Foresight News", "site:foresightnews.pro 香港 OR 监管 OR RWA when:7d", "zh-CN", "CN", "CN:zh-Hans", "홍콩/규제"),
+        ("Vietnam Investment Review", "site:vir.com.vn crypto OR blockchain OR digital asset when:7d", "en-US", "US", "US:en", "베트남/규제"),
     ])
 
     # RSS 소스: (이름, URL, 기본 분류 힌트) — 2026-08 기준 수신 확인된 피드만 등록
     rss_sources: list = field(default_factory=lambda: [
+        # ── 사용자가 지정한 국가별 매체 (2026-08-17 피드 수신 검증 완료) ──
+        # 한국
+        ("ZDNet Korea", "https://zdnet.co.kr/feed", "한국"),
+        # 미국
+        ("DL News", "https://dlnews.com/arc/outboundfeeds/rss/", "미국"),
+        # UAE
+        ("Arabian Business", "https://arabianbusiness.com/feed", "UAE"),
+        ("FinTech News ME", "https://fintechnews.ae/feed", "UAE"),
+        ("Economy Middle East", "https://economymiddleeast.com/feed", "UAE"),
+        ("Gulf News", "https://gulfnews.com/feed", "UAE"),
+        # 싱가포르
+        ("FinTech News SG", "https://fintechnews.sg/feed", "싱가포르"),
+        ("Tech in Asia", "https://techinasia.com/feed", "싱가포르"),
+        # 베트남
+        ("Vietnam News", "https://vietnamnews.vn/rss/economy.rss", "베트남"),
+        ("VnExpress", "https://vnexpress.net/rss/kinh-doanh.rss", "베트남"),
+        # 중국
+        ("PANews", "https://panewslab.com/rss.xml", "중국"),
+        ("ChainCatcher", "https://chaincatcher.com/rss.xml", "중국"),
+        # 홍콩
+        ("MetaEra", "https://metaera.hk/rss.xml", "홍콩"),
+        # 일본
+        ("NADA NEWS", "https://coindeskjapan.com/feed", "일본"),
+        ("CoinChoice", "https://coinchoice.net/feed", "일본"),
+
         # 크립토 매체의 규제 섹션 (실제로 규제만 걸러 나오는 것만 등록)
         ("CryptoSlate 규제", "https://cryptoslate.com/regulation/feed/", "해외/규제"),
         ("CryptoBriefing 규제", "https://cryptobriefing.com/category/regulation/feed/", "해외/규제"),

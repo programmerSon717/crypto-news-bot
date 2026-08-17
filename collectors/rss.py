@@ -7,6 +7,15 @@ import httpx
 
 from models import NewsItem
 
+# 일부 매체(Arabian Business, Tech in Asia 등)는 짧은 UA 를 403 으로 막는다.
+# 브라우저와 같은 전체 UA 를 써야 통과한다.
+UA = {
+    "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                   "Chrome/128.0 Safari/537.36"),
+    "Accept": "application/rss+xml, application/xml, text/xml, */*",
+}
+
 
 def _entry_epoch(entry) -> float | None:
     """RSS 엔트리의 발행시각을 epoch(UTC)로. 없거나 파싱 실패면 None."""
@@ -23,7 +32,7 @@ def _entry_epoch(entry) -> float | None:
 async def fetch_feed(client: httpx.AsyncClient, name: str, url: str, region_hint: str) -> list[NewsItem]:
     try:
         r = await client.get(url, timeout=20, follow_redirects=True,
-                             headers={"User-Agent": "Mozilla/5.0"})
+                             headers=UA)
         r.raise_for_status()
         parsed = await asyncio.to_thread(feedparser.parse, r.content)
         items = []
