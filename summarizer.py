@@ -51,6 +51,21 @@ async def _throttle():
         _last_call = asyncio.get_running_loop().time()
 
 
+# 일일 한도를 소진한 모델. 한 번 걸리면 그 실행 동안 다시 시도하지 않는다.
+# 이걸 안 하면 죽은 모델에 재시도를 반복해 실행이 수십 분씩 멈춘다.
+_exhausted: set[str] = set()
+
+
+def _is_quota_exhausted(msg: str) -> bool:
+    """분당 초과(잠시 후 회복)와 한도 소진(그날은 끝)을 구분한다."""
+    return "RESOURCE_EXHAUSTED" in msg and "PerDay" in msg
+
+
+def _usable(models: list[str]) -> list[str]:
+    live = [m for m in models if m not in _exhausted]
+    return live or models      # 전부 소진이면 어쩔 수 없이 다시 시도
+
+
 def _retry_after(msg: str) -> float:
     """429 응답에 담긴 대기 시간을 뽑아낸다. 없으면 기본값."""
     m = re.search(r"retry in ([0-9.]+)s", msg) or re.search(r"'retryDelay': '(\d+)s'", msg)
@@ -144,7 +159,7 @@ async def generate_json(system_prompt: str, user_prompt: str,
         return resp.text or ""
 
     last_err = None
-    for model in [settings.gemini_model, *FALLBACK_MODELS]:
+    for model in _usable([settings.gemini_model, *FALLBACK_MODELS]):
         for attempt in range(3):
             try:
                 await _throttle()
@@ -154,6 +169,12 @@ async def generate_json(system_prompt: str, user_prompt: str,
             except Exception as e:
                 last_err = e
                 msg = str(e)
+                if _is_quota_exhausted(msg):
+                    # 그날 한도가 끝난 모델이다. 기다려도 안 되니 바로 다음 모델로.
+                    if model not in _exhausted:
+                        _exhausted.add(model)
+                        print(f"[모델] {model} 일일 한도 소진 — 이번 실행에서 제외")
+                    break
                 if _retryable(e, msg):
                     delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \
                         else 2 * (attempt + 1)
@@ -174,7 +195,7 @@ async def summarize_insight(item: NewsItem, posted_at: str) -> dict | None:
     """
     user_prompt = build_insight_prompt(item.body, item.url, posted_at,
                                        has_image=bool(item.image))
-    models = [settings.gemini_model, *FALLBACK_MODELS]
+    models = _usable([settings.gemini_model, *FALLBACK_MODELS])
     last_err = None
 
     for model in models:
@@ -194,6 +215,12 @@ async def summarize_insight(item: NewsItem, posted_at: str) -> dict | None:
             except Exception as e:
                 last_err = e
                 msg = str(e)
+                if _is_quota_exhausted(msg):
+                    # 그날 한도가 끝난 모델이다. 기다려도 안 되니 바로 다음 모델로.
+                    if model not in _exhausted:
+                        _exhausted.add(model)
+                        print(f"[모델] {model} 일일 한도 소진 — 이번 실행에서 제외")
+                    break
                 if _retryable(e, msg):
                     delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \
                         else 2 * (attempt + 1)
@@ -210,7 +237,7 @@ async def summarize(item: NewsItem) -> dict | None:
     user_prompt = build_user_prompt(
         item.source, item.title, item.url, item.body, item.region_hint
     )
-    models = [settings.gemini_model, *FALLBACK_MODELS]
+    models = _usable([settings.gemini_model, *FALLBACK_MODELS])
     last_err = None
 
     for model in models:
@@ -228,6 +255,12 @@ async def summarize(item: NewsItem) -> dict | None:
                 last_err = e
                 msg = str(e)
                 # 과부하/레이트리밋이면 잠시 쉬었다 재시도, 그 외 오류는 다음 모델로
+                if _is_quota_exhausted(msg):
+                    # 그날 한도가 끝난 모델이다. 기다려도 안 되니 바로 다음 모델로.
+                    if model not in _exhausted:
+                        _exhausted.add(model)
+                        print(f"[모델] {model} 일일 한도 소진 — 이번 실행에서 제외")
+                    break
                 if _retryable(e, msg):
                     delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \
                         else 2 * (attempt + 1)

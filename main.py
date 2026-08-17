@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from collectors import (binance, upbit, rss, telegram_channels, tg_web,
-                        blockmedia_archive, coin68)
+                        blockmedia_archive, coin68, regulation)
 import country
 from config import settings
 from models import NewsItem
@@ -288,6 +288,8 @@ async def collect_all(client: httpx.AsyncClient) -> list[NewsItem]:
     items += await upbit.fetch(client)
     items += await rss.fetch_all(client, settings.rss_sources)
     items += await coin68.fetch(client)      # 베트남 정책 (RSS 없음)
+    # 국가별 규제 뉴스 — 각국 탭을 채우는 주 공급원
+    items += await regulation.fetch_all(client, settings.regulation_sources)
     items += await recent_tg_web(client)
     items += await telegram_channels.fetch()
     return items

@@ -56,8 +56,27 @@ class Settings:
         c.strip() for c in os.getenv("TG_SOURCE_CHANNELS", "").split(",") if c.strip()
     ])
 
+    # 국가별 규제(Regulation) 전용 소스.
+    # 대부분의 크립토 매체는 Regulation 섹션 RSS 를 따로 제공하지 않는다(대부분 404).
+    # 그래서 구글뉴스 검색 피드로 "그 나라 + 규제" 를 직접 겨냥한다.
+    # 힌트에 '규제'가 들어가면 프롬프트가 정책 탭 후보로 우선 판단한다.
+    regulation_sources: list = field(default_factory=lambda: [
+        ("규제:미국", "crypto regulation SEC OR CFTC OR stablecoin bill when:7d", "en-US", "US", "US:en", "미국/규제"),
+        ("규제:한국", "가상자산 규제 금융위 OR 금감원 OR 디지털자산기본법 when:7d", "ko", "KR", "KR:ko", "한국/규제"),
+        ("규제:일본", "暗号資産 規制 金融庁 OR ステーブルコイン when:7d", "ja", "JP", "JP:ja", "일본/규제"),
+        ("규제:홍콩", "Hong Kong crypto regulation SFC OR stablecoin when:7d", "en-US", "US", "US:en", "홍콩/규제"),
+        ("규제:싱가포르", "Singapore crypto regulation MAS OR digital token when:7d", "en-US", "US", "US:en", "싱가포르/규제"),
+        ("규제:UAE", "UAE OR Dubai crypto regulation VARA OR ADGM when:7d", "en-US", "US", "US:en", "UAE/규제"),
+        ("규제:베트남", "quy định tài sản số OR crypto Việt Nam when:7d", "vi", "VN", "VN:vi", "베트남/규제"),
+        ("규제:중국", "China crypto regulation PBOC OR digital yuan when:7d", "en-US", "US", "US:en", "중국/규제"),
+    ])
+
     # RSS 소스: (이름, URL, 기본 분류 힌트) — 2026-08 기준 수신 확인된 피드만 등록
     rss_sources: list = field(default_factory=lambda: [
+        # 크립토 매체의 규제 섹션 (실제로 규제만 걸러 나오는 것만 등록)
+        ("CryptoSlate 규제", "https://cryptoslate.com/regulation/feed/", "해외/규제"),
+        ("CryptoBriefing 규제", "https://cryptobriefing.com/category/regulation/feed/", "해외/규제"),
+        ("Blockworks 정책", "https://blockworks.co/feed/category/policy", "해외/규제"),
         # 국내
         ("블록미디어", "https://www.blockmedia.co.kr/feed", "국내"),
         ("토큰포스트", "https://www.tokenpost.kr/rss", "국내"),
