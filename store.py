@@ -5,6 +5,14 @@ import time
 from contextlib import contextmanager
 
 
+def _as_float(v) -> float | None:
+    """origin_at 은 ALTER TABLE 로 붙인 TEXT 컬럼이라 문자열로 돌아온다."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 class Store:
     def __init__(self, path: str):
         self.path = path
@@ -34,7 +42,11 @@ class Store:
             cols = {r[1] for r in c.execute("PRAGMA table_info(published)")}
             # text 는 발행 원문(HTML). 나중에 다른 탭으로 옮길 때 그대로 다시 쓸 수 있다.
             # extra_ids: 한 글이 사진+본문 두 메시지로 나갈 때 나머지 id(쉼표 구분)
-            for col in ("category", "lede", "text", "extra_ids"):
+            # 재정렬(--resort)에 필요한 것들:
+            #   photo_file_id — 사진을 다시 올릴 때 재업로드 없이 그대로 재사용
+            #   origin_at     — 기사/트윗의 원래 게시 시각. 정렬 기준(발행 시각이 아님)
+            for col in ("category", "lede", "text", "extra_ids",
+                        "photo_file_id", "origin_at"):
                 if col not in cols:
                     c.execute(f"ALTER TABLE published ADD COLUMN {col} TEXT")
             # 다이제스트 중복 발행 방지용 — 어느 구간까지 요약했는지 기록
@@ -75,30 +87,42 @@ class Store:
     def record_published(self, key: str, message_id: int, thread_id: int | None,
                          source_url: str, headline: str,
                          category: str = "", lede: str = "", text: str = "",
-                         extra_ids: list | None = None):
+                         extra_ids: list | None = None, photo_file_id: str = "",
+                         origin_at: float | None = None):
         with self._conn() as c:
             c.execute(
                 """INSERT OR REPLACE INTO published
                    (key, message_id, thread_id, source_url, headline,
-                    published_at, category, lede, text, extra_ids)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    published_at, category, lede, text, extra_ids,
+                    photo_file_id, origin_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (key, message_id, thread_id, source_url, headline, time.time(),
-                 category, lede, text, ",".join(str(i) for i in (extra_ids or []))),
+                 category, lede, text, ",".join(str(i) for i in (extra_ids or [])),
+                 photo_file_id, origin_at),
             )
 
     def all_published(self) -> list[dict]:
         with self._conn() as c:
             rows = c.execute(
                 """SELECT key, message_id, thread_id, category, headline, lede, text,
-                          extra_ids
+                          extra_ids, photo_file_id, origin_at
                    FROM published ORDER BY published_at"""
             ).fetchall()
         return [
             {"key": r[0], "message_id": r[1], "thread_id": r[2], "category": r[3] or "",
              "headline": r[4] or "", "lede": r[5] or "", "text": r[6] or "",
-             "extra_ids": [int(x) for x in (r[7] or "").split(",") if x.strip()]}
+             "extra_ids": [int(x) for x in (r[7] or "").split(",") if x.strip()],
+             "photo_file_id": r[8] or "", "origin_at": _as_float(r[9])}
             for r in rows
         ]
+
+    def update_published_ids(self, key: str, message_id: int, extra_ids: list):
+        """재정렬로 메시지를 다시 올린 뒤 새 id 로 갱신한다."""
+        with self._conn() as c:
+            c.execute(
+                "UPDATE published SET message_id=?, extra_ids=? WHERE key=?",
+                (message_id, ",".join(str(i) for i in extra_ids), key),
+            )
 
     def update_published_location(self, key: str, message_id: int,
                                   thread_id: int | None, category: str):
@@ -138,6 +162,11 @@ class Store:
                 "INSERT OR REPLACE INTO digest_log (scope, window_end, message_id) VALUES (?,?,?)",
                 (scope, window_end, message_id),
             )
+
+    def drop_published(self, key: str):
+        """발행 기록만 지운다. seen 은 남겨 다시 수집되지 않게 한다."""
+        with self._conn() as c:
+            c.execute("DELETE FROM published WHERE key=?", (key,))
 
     def forget(self, key: str):
         """재발행할 수 있도록 이력에서 지운다."""

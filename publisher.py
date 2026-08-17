@@ -1,4 +1,5 @@
 """Telegram Bot API로 채널에 발행. HTML parse mode + blockquote로 스크린샷 포맷 재현."""
+import asyncio
 import html
 
 import httpx
@@ -7,6 +8,43 @@ import topics
 from config import settings
 
 API = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
+
+
+async def _post(client: httpx.AsyncClient, method: str, *, json=None, data=None,
+                files=None, tries: int = 5) -> dict | None:
+    """텔레그램 API 호출. 429(레이트리밋)를 만나면 지시된 시간만큼 쉬고 재시도한다.
+
+    이걸 빼먹으면 연속 발행 시 조용히 실패한다. 실제로 재정렬 중 73건이
+    429로 사라진 적이 있다.
+    """
+    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/{method}"
+    for attempt in range(tries):
+        r = await client.post(url, json=json, data=data, files=files, timeout=60)
+        if r.status_code == 200:
+            return r.json().get("result", {})
+
+        body = {}
+        try:
+            body = r.json()
+        except Exception:
+            pass
+
+        if r.status_code == 429:
+            wait = body.get("parameters", {}).get("retry_after", 5) + 1
+            print(f"[publisher] 레이트리밋 — {wait}초 대기 후 재시도")
+            await asyncio.sleep(wait)
+            continue
+
+        # 5xx 는 일시적일 수 있으므로 한 번 더 시도한다
+        if 500 <= r.status_code < 600 and attempt < tries - 1:
+            await asyncio.sleep(2 * (attempt + 1))
+            continue
+
+        print(f"[publisher] {method} 실패: {r.status_code} {str(body)[:180]}")
+        return None
+
+    print(f"[publisher] {method} 재시도 소진")
+    return None
 
 
 def render(data: dict, url: str) -> str:
@@ -113,9 +151,9 @@ def _source_line(data: dict, url: str) -> str:
     return f"📎 출처: {e(label)}"
 
 
-async def send_raw(client: httpx.AsyncClient, text: str,
-                   thread_id: int | None) -> int | None:
-    """이미 만들어진 본문을 그대로 발행한다(탭 이동 등 재발행용)."""
+async def send_raw(client: httpx.AsyncClient, text: str, thread_id: int | None,
+                   reply_to: int | None = None) -> int | None:
+    """이미 만들어진 본문을 그대로 발행한다(탭 이동·재정렬용)."""
     payload = {
         "chat_id": settings.telegram_channel_id,
         "text": text,
@@ -124,20 +162,17 @@ async def send_raw(client: httpx.AsyncClient, text: str,
     }
     if thread_id:
         payload["message_thread_id"] = thread_id
-    r = await client.post(API, json=payload, timeout=20)
-    if r.status_code != 200:
-        print(f"[publisher] 재발행 실패: {r.status_code} {r.text[:200]}")
-        return None
-    return r.json().get("result", {}).get("message_id")
+    if reply_to:
+        payload["reply_parameters"] = {"message_id": reply_to}
+    result = await _post(client, "sendMessage", json=payload)
+    return result.get("message_id") if result else None
 
 
 async def delete(client: httpx.AsyncClient, message_id: int) -> bool:
-    r = await client.post(
-        f"https://api.telegram.org/bot{settings.telegram_bot_token}/deleteMessage",
-        json={"chat_id": settings.telegram_channel_id, "message_id": message_id},
-        timeout=15,
-    )
-    return bool(r.json().get("ok"))
+    result = await _post(client, "deleteMessage",
+                         json={"chat_id": settings.telegram_channel_id,
+                               "message_id": message_id}, tries=2)
+    return result is not None
 
 
 CAPTION_LIMIT = 1024   # 텔레그램 사진 캡션 상한
@@ -168,9 +203,12 @@ async def publish(client: httpx.AsyncClient, data: dict, url: str,
 
     photo_id = None
     if image:
+        _last_file_id.clear()
         photo_id = await _send_photo(client, image, render_caption(data), thread_id)
         if photo_id is None:
             print("[publisher] 사진 업로드 실패 — 본문만 발행합니다")
+        elif _last_file_id:
+            data["_photo_file_id"] = _last_file_id[0]
 
     data["_headline_in_caption"] = photo_id is not None
     text = render(data, url)
@@ -188,12 +226,11 @@ async def publish(client: httpx.AsyncClient, data: dict, url: str,
     if photo_id:
         payload["reply_parameters"] = {"message_id": photo_id}
 
-    r = await client.post(API, json=payload, timeout=30)
-    if r.status_code != 200:
-        print(f"[publisher] 발행 실패: {r.status_code} {r.text[:200]}")
+    result = await _post(client, "sendMessage", json=payload)
+    if result is None:
         return photo_id
 
-    body_id = r.json().get("result", {}).get("message_id")
+    body_id = result.get("message_id")
     # 사진과 본문 두 개로 나갔으면 둘 다 지울 수 있어야 한다
     data["_message_ids"] = [i for i in (photo_id, body_id) if i]
 
@@ -213,13 +250,31 @@ async def _send_photo(client: httpx.AsyncClient, image: bytes, caption: str,
     if thread_id:
         data["message_thread_id"] = str(thread_id)
 
-    r = await client.post(
-        f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendPhoto",
-        data=data,
-        files={"photo": ("capture.jpg", image, "image/jpeg")},
-        timeout=60,
-    )
-    if r.status_code != 200:
-        print(f"[publisher] 사진 전송 실패: {r.status_code} {r.text[:200]}")
+    result = await _post(client, "sendPhoto", data=data,
+                         files={"photo": ("capture.jpg", image, "image/jpeg")})
+    if result is None:
         return None
-    return r.json().get("result", {}).get("message_id")
+    # file_id 를 남겨두면 재정렬 때 이미지를 다시 올리지 않고 그대로 재사용할 수 있다
+    sizes = result.get("photo") or []
+    if sizes:
+        _last_file_id.append(sizes[-1].get("file_id", ""))
+    return result.get("message_id")
+
+
+# 직전 sendPhoto 의 file_id 를 publish() 가 꺼내 쓰기 위한 임시 보관
+_last_file_id: list[str] = []
+
+
+async def send_photo_by_id(client: httpx.AsyncClient, file_id: str, caption: str,
+                           thread_id: int | None) -> int | None:
+    """이미 올린 사진을 file_id 로 다시 보낸다(재업로드 없음)."""
+    payload = {
+        "chat_id": settings.telegram_channel_id,
+        "photo": file_id,
+        "caption": caption[:CAPTION_LIMIT],
+        "parse_mode": "HTML",
+    }
+    if thread_id:
+        payload["message_thread_id"] = thread_id
+    result = await _post(client, "sendPhoto", json=payload)
+    return result.get("message_id") if result else None

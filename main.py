@@ -12,6 +12,8 @@
     python main.py --digest                  # 직전 1시간 카테고리별 요약 + 전체 브리핑
     python main.py --digest --hours 3        # 3시간 구간
     python main.py --digest --dry-run        # 발행 없이 확인
+    python main.py --resort                  # 탭 안 글을 최신순으로 재정렬
+    python main.py --resort --only 이슈       # 특정 탭만
 """
 import asyncio
 import sys
@@ -20,7 +22,8 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
-from collectors import binance, upbit, rss, telegram_channels, tg_web, blockmedia_archive
+from collectors import (binance, upbit, rss, telegram_channels, tg_web,
+                        blockmedia_archive, coin68)
 from config import settings
 from models import NewsItem
 import publisher
@@ -94,6 +97,9 @@ def normalize_category(cat: str | None) -> str:
 # 이보다 오래된 글은 '실시간'이 아니라고 보고 게시 시각을 함께 표기한다.
 FRESH_SEC = 3 * 3600
 
+# 시장 지표 탭. 근거를 확인할 수 있는 언론 보도만 싣는다(커뮤니티 시황 코멘트 제외).
+MARKET_TABS = {"Korea Rates", "US Rates", "Korea Equities", "US Equities"}
+
 
 def is_repost(item: NewsItem) -> bool:
     """다른 텔레그램 채널에서 퍼온 글인가. 이 글들은 수집처가 출처가 아니다."""
@@ -126,15 +132,48 @@ def annotate_origin(data: dict, item: NewsItem):
 
 
 def publish_order(items: list[NewsItem]) -> list[NewsItem]:
-    """발행 순서 = 최신 → 과거.
+    """발행 순서 = 과거 → 최신.
 
-    텔레그램은 메시지 순서를 바꿀 수 없고, 보낸 순서대로 위에서 아래로 쌓인다.
-    따라서 **최신부터 보내야** 탭 위쪽에 최신 글, 아래쪽에 과거 글이 놓인다.
-    (사용자 요구: 최신은 앞으로, 과거는 뒤로)
+    텔레그램은 탭을 열면 맨 아래로 이동한다. 그러므로 **최신이 맨 아래**에
+    있어야 열자마자 최신 기사가 보인다. 그래서 오래된 것부터 보낸다.
 
-    날짜 불명은 맨 앞(최신 자리)에 둔다 — 대개 방금 올라온 공지다.
+    실시간으로 들어오는 새 글도 자동으로 맨 아래에 붙으므로 이 순서가 유지된다.
+    날짜 불명은 맨 뒤(최신 자리)로 보낸다.
     """
-    return sorted(items, key=lambda i: i.published_at or float("inf"), reverse=True)
+    return sorted(items, key=lambda i: i.published_at or float("inf"))
+
+
+SUMMARY_CONCURRENCY = 4   # 모델 호출 동시 실행 수. 무료 티어 레이트리밋을 고려한 값.
+
+
+async def _summarize_one(item: NewsItem) -> dict | None:
+    """항목 1건을 알맞은 경로로 요약한다."""
+    if is_repost(item):
+        posted = (
+            datetime.fromtimestamp(item.published_at, KST).strftime("%Y-%m-%d %H:%M")
+            if item.published_at else "불명"
+        )
+        return await summarize_insight(item, posted)
+    return await summarize(item)
+
+
+async def _summarize_ahead(items: list[NewsItem]) -> list:
+    """요약을 미리 병렬로 돌린다. 발행은 순서대로 해야 하므로 결과 순서는 유지한다.
+
+    한 건씩 처리하면 건당 15~20초(이미지 읽기)가 그대로 쌓여 수십 건에 수십 분이 걸린다.
+    발행 자체는 텔레그램 레이트리밋 때문에 순차로 남겨둔다.
+    """
+    sem = asyncio.Semaphore(SUMMARY_CONCURRENCY)
+
+    async def one(it: NewsItem):
+        async with sem:
+            try:
+                return await _summarize_one(it)
+            except Exception as e:
+                print(f"[요약] 실패({it.title[:40]}): {e}")
+                return None
+
+    return await asyncio.gather(*[one(i) for i in items])
 
 
 async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: bool,
@@ -144,7 +183,27 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
     started = time.monotonic()
     deferred = 0
 
-    for item in publish_order(items):
+    ordered = publish_order(items)
+
+    # 아직 안 본 것만 추려 미리 요약해둔다(순서 유지).
+    pending = [i for i in ordered if not store.is_seen(Store.make_key(i.source, i.unique_id))]
+    if budget:
+        # 시간 상한이 걸린 실행(CI)에서는 어차피 발행 못 할 분량까지 요약하면 낭비다.
+        # 발행에 건당 약 5초 걸린다고 보고 잘라낸다. 나머지는 다음 실행이 처리한다.
+        cap = max(1, budget // 5)
+        if len(pending) > cap:
+            print(f"[요약] 시간 상한 고려해 {len(pending)}건 중 {cap}건만 처리")
+            pending = pending[:cap]
+
+    summaries: dict[str, dict | None] = {}
+    if pending and not warm:
+        print(f"[요약] {len(pending)}건 병렬 처리 시작 (동시 {SUMMARY_CONCURRENCY})")
+        results = await _summarize_ahead(pending)
+        summaries = {Store.make_key(i.source, i.unique_id): d
+                     for i, d in zip(pending, results)}
+        print(f"[요약] 완료 — 유효 {sum(1 for d in results if d)}건")
+
+    for item in ordered:
         # 시간 상한을 넘으면 남은 항목은 손대지 않고 다음 실행으로 넘긴다.
         # '본 것으로 표시'를 하기 전에 끊어야 발행 없이 유실되는 항목이 생기지 않는다.
         if budget and time.monotonic() - started > budget:
@@ -159,17 +218,8 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         if warm:
             continue
 
-        # 다른 채널에서 퍼온 글은 이미지 유무와 무관하게 인사이트 경로로 처리한다.
-        # 일반 뉴스 경로로 흘리면 출처가 '퍼온 채널'로 찍히므로 폴백하지 않는다.
-        data = None
-        if is_repost(item):
-            posted = (
-                datetime.fromtimestamp(item.published_at, KST).strftime("%Y-%m-%d %H:%M")
-                if item.published_at else "불명"
-            )
-            data = await summarize_insight(item, posted)
-        else:
-            data = await summarize(item)
+        # 미리 병렬로 돌려둔 결과를 쓴다. 없으면(단건 경로) 그 자리에서 처리.
+        data = summaries[key] if key in summaries else await _summarize_one(item)
         if data is None:
             print(f"[skip] 무관/실패: {item.title[:60]}")
             continue
@@ -178,6 +228,11 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
             continue
 
         cat = normalize_category(data.get("category"))
+        if cat in MARKET_TABS and is_repost(item):
+            # 금리·증시 탭은 객관성이 중요해 언론 보도만 싣는다.
+            # 개인 커뮤니티에서 퍼온 시황 코멘트는 근거를 확인할 수 없어 제외.
+            print(f"[skip] 커뮤니티 출처는 {cat} 탭에 넣지 않음: {item.title[:50]}")
+            continue
         data["category"] = cat
         stats[cat] = stats.get(cat, 0) + 1
         annotate_origin(data, item)
@@ -194,8 +249,10 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
             store.record_published(key, msg_id, topics_thread_id(cat),
                                    origin or item.url, data["headline"],
                                    category=cat, lede=data.get("lede", ""),
-                                   text=data.get("_rendered", ""), extra_ids=ids)
-        await asyncio.sleep(3)  # 텔레그램 rate limit 여유
+                                   text=data.get("_rendered", ""), extra_ids=ids,
+                                   photo_file_id=data.get("_photo_file_id", ""),
+                                   origin_at=item.published_at)
+        await asyncio.sleep(5)  # 항목당 사진+본문 2건이 나가므로 여유를 둔다
 
     total = sum(stats.values())
     if total:
@@ -221,6 +278,7 @@ async def collect_all(client: httpx.AsyncClient) -> list[NewsItem]:
     items += await binance.fetch(client)
     items += await upbit.fetch(client)
     items += await rss.fetch_all(client, settings.rss_sources)
+    items += await coin68.fetch(client)      # 베트남 정책 (RSS 없음)
     items += await recent_tg_web(client)
     items += await telegram_channels.fetch()
     return items
@@ -257,6 +315,16 @@ async def main():
         if do_digest:
             import digest
             await digest.run(client, store, hours=digest_hours, dry_run=dry_run)
+            return
+
+        if "--purge" in sys.argv:
+            import purge
+            await purge.run(client, store, only=_arg_value("--only"), dry_run=dry_run)
+            return
+
+        if "--resort" in sys.argv:
+            import resort
+            await resort.run(client, store, only=_arg_value("--only"), dry_run=dry_run)
             return
 
         if "--reroute" in sys.argv:

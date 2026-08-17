@@ -63,8 +63,23 @@ class Settings:
         ("토큰포스트", "https://www.tokenpost.kr/rss", "국내"),
         ("블록체인투데이", "https://www.blockchaintoday.co.kr/rss/allArticle.xml", "국내"),
         ("금융위원회 보도자료", "http://www.fsc.go.kr/about/fsc_bbs_rss/?fid=0111", "국내"),
+        ("블록미디어 정책", "https://www.blockmedia.co.kr/feed?cat=policy", "국내"),
+        # 일본 — 현지 매체라야 금융청(FSA) 움직임이 제때 잡힌다
+        ("CoinPost(일본)", "https://coinpost.jp/?feed=rss2", "일본"),
+        ("あたらしい経済(일본)", "https://www.neweconomy.jp/feed", "일본"),
+        # 홍콩·아시아
+        ("Forkast(아시아)", "https://forkast.news/feed/", "아시아"),
+        ("SCMP(홍콩)", "https://www.scmp.com/rss/36/feed", "홍콩"),
+        # 싱가포르 — MAS·금융권 소식
+        ("Business Times(싱가포르)", "https://www.businesstimes.com.sg/rss/banking-finance", "싱가포르"),
+        ("Straits Times(싱가포르)", "https://www.straitstimes.com/news/business/rss.xml", "싱가포르"),
+        # 미국 규제기관 원문
+        ("CFTC 보도자료", "https://www.cftc.gov/RSS/RSSGP/rssgp.xml", "미국"),
+        ("연준 보도자료", "https://www.federalreserve.gov/feeds/press_all.xml", "미국"),
         # 해외
         ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/", "해외"),
+        ("Bitcoin.com", "https://news.bitcoin.com/feed/", "해외"),
+        ("CryptoSlate", "https://cryptoslate.com/feed/", "해외"),
         ("Cointelegraph", "https://cointelegraph.com/rss", "해외"),
         ("Cointelegraph 규제", "https://cointelegraph.com/rss/tag/regulation", "해외"),
         ("The Block", "https://www.theblock.co/rss.xml", "해외"),
