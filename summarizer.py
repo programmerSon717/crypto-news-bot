@@ -67,9 +67,29 @@ def _is_quota_exhausted(msg: str) -> bool:
     return "PerDay" in msg and "PerMinute" not in msg
 
 
+def _candidates() -> list[str]:
+    """시도할 모델 목록. 주 모델이 폴백 목록에도 있으면 중복 호출이 되므로 정리한다."""
+    return list(dict.fromkeys([settings.gemini_model, *FALLBACK_MODELS]))
+
+
 def _usable(models: list[str]) -> list[str]:
-    live = [m for m in models if m not in _exhausted]
-    return live or models      # 전부 소진이면 어쩔 수 없이 다시 시도
+    """아직 살아 있는 모델만. 전부 소진이면 빈 목록을 준다.
+
+    예전에는 전부 소진일 때 목록을 그대로 돌려줘 '어쩔 수 없이 다시 시도'했는데,
+    그러면 건마다 모델 수만큼 429 를 받아낸다. _throttle() 이 전역이라 호출 하나당
+    5초가 붙어, 소진된 날에는 100여 건 처리에 40분이 걸려 job 타임아웃에 잘렸다.
+    살아 있는 모델이 없으면 그냥 포기하는 게 맞다.
+    """
+    return [m for m in models if m not in _exhausted]
+
+
+def all_exhausted() -> bool:
+    """이번 실행에서 쓸 수 있는 모델이 하나도 안 남았는가.
+
+    호출하는 쪽이 남은 항목을 '요약 실패'가 아니라 '손대지 않음'으로 처리해
+    다음 실행에 넘길 수 있게 하려고 공개해 둔다.
+    """
+    return not _usable(_candidates())
 
 
 def _retry_after(msg: str) -> float:
@@ -82,10 +102,17 @@ def _retry_after(msg: str) -> float:
             pass
     return 20.0
 
-# 기본 모델이 과부하(503)일 때 순서대로 시도할 대체 모델
-# 2026-08-17 실측: 3.5-flash·3-flash-preview 는 일일 한도 소진, 아래 둘은 가용.
-# 순서대로 시도한다.
-FALLBACK_MODELS = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3-flash-preview"]
+# 기본 모델이 과부하(503)·소진일 때 순서대로 시도할 대체 모델.
+#
+# 2026-08-26 실측 — 무료 티어 일일 한도(429 응답의 quotaValue)는 모델마다 다르다:
+#   gemini-3.1-flash-lite   500건/일   ← 유일하게 상시 운영이 가능한 창구
+#   gemini-3.7-flash         20건/일
+#   gemini-3.5-flash         20건/일
+#   gemini-3-flash-preview   20건/일
+# 그래서 주 모델(GEMINI_MODEL)은 flash-lite 로 두고, 나머지는 소진 후 예비로만 쓴다.
+# 이 순서를 되돌리면 하루 20건 만에 발행이 멈춘다.
+FALLBACK_MODELS = ["gemini-3.1-flash-lite", "gemini-3.7-flash",
+                   "gemini-3.5-flash", "gemini-3-flash-preview"]
 
 _config = types.GenerateContentConfig(
     system_instruction=SYSTEM_PROMPT,
@@ -166,8 +193,11 @@ async def generate_json(system_prompt: str, user_prompt: str,
         )
         return resp.text or ""
 
+    models = _usable(_candidates())
+    if not models:
+        return None                      # 오늘 쓸 수 있는 모델 없음 — 헛호출하지 않는다
     last_err = None
-    for model in _usable([settings.gemini_model, *FALLBACK_MODELS]):
+    for model in models:
         for attempt in range(3):
             try:
                 await _throttle()
@@ -203,7 +233,9 @@ async def summarize_insight(item: NewsItem, posted_at: str) -> dict | None:
     """
     user_prompt = build_insight_prompt(item.body, item.url, posted_at,
                                        has_image=bool(item.image))
-    models = _usable([settings.gemini_model, *FALLBACK_MODELS])
+    models = _usable(_candidates())
+    if not models:
+        return None                      # 오늘 쓸 수 있는 모델 없음 — 헛호출하지 않는다
     last_err = None
 
     for model in models:
@@ -245,7 +277,9 @@ async def summarize(item: NewsItem) -> dict | None:
     user_prompt = build_user_prompt(
         item.source, item.title, item.url, item.body, item.region_hint
     )
-    models = _usable([settings.gemini_model, *FALLBACK_MODELS])
+    models = _usable(_candidates())
+    if not models:
+        return None                      # 오늘 쓸 수 있는 모델 없음 — 헛호출하지 않는다
     last_err = None
 
     for model in models:

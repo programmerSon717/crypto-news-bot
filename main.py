@@ -23,13 +23,15 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from collectors import (binance, upbit, rss, telegram_channels, tg_web,
-                        blockmedia_archive, coin68, regulation)
+                        blockmedia_archive, blockmedia_research, coin68,
+                        regulation)
 import country
 from config import settings
 from models import NewsItem
 import publisher
 from publisher import publish
 from store import Store
+import summarizer
 from summarizer import summarize, summarize_insight
 
 store = Store(settings.db_path)
@@ -142,6 +144,26 @@ def is_stale(item: NewsItem) -> bool:
     return datetime.now(tz=KST).timestamp() - item.published_at > limit * 3600
 
 
+def dedupe_items(items: list[NewsItem]) -> list[NewsItem]:
+    """같은 중복제거 키를 가진 항목이 여러 수집기에서 들어오면 첫 번째만 남긴다.
+
+    블록미디어 리서치 글은 일반 피드에도 실린다. 키를 공유시켜 두 번 발행되는 것은
+    막았지만, 어느 쪽이 먼저 처리되느냐에 따라 탭이 달라진다.
+    수집 순서(리서치 먼저)를 그대로 존중해 여기서 잘라낸다.
+    """
+    seen, out = set(), []
+    for it in items:
+        key = Store.make_key(it.source, it.unique_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(it)
+    dropped = len(items) - len(out)
+    if dropped:
+        print(f"[중복] 수집 단계에서 같은 글 {dropped}건 정리")
+    return out
+
+
 def publish_order(items: list[NewsItem]) -> list[NewsItem]:
     """발행 순서 = 과거 → 최신.
 
@@ -158,6 +180,14 @@ def publish_order(items: list[NewsItem]) -> list[NewsItem]:
 # 동시 실행을 늘려도 처리량은 안 늘고 429만 늘어난다.
 SUMMARY_CONCURRENCY = 2
 
+# 실행 예산 중 요약 단계에 쓸 비율. 나머지는 발행에 남긴다.
+# 요약이 예산을 전부 먹으면 발행 루프가 통째로 밀려, 애써 요약한 결과를 버리게 된다.
+SUMMARIZE_BUDGET_RATIO = 0.6
+
+# 예산 초과·모델 소진으로 **손도 대지 않은** 항목. '요약 실패'(None)와 구분해야 한다.
+# 실패는 '본 것'으로 찍고 넘어가지만, 이건 다음 실행이 다시 잡아야 한다.
+SKIPPED = object()
+
 
 async def _summarize_one(item: NewsItem) -> dict | None:
     """항목 1건을 알맞은 경로로 요약한다."""
@@ -170,23 +200,35 @@ async def _summarize_one(item: NewsItem) -> dict | None:
     return await summarize(item)
 
 
-async def _summarize_ahead(items: list[NewsItem]) -> list:
+async def _summarize_ahead(items: list[NewsItem],
+                           deadline: float | None = None) -> list:
     """요약을 미리 병렬로 돌린다. 발행은 순서대로 해야 하므로 결과 순서는 유지한다.
 
     한 건씩 처리하면 건당 15~20초(이미지 읽기)가 그대로 쌓여 수십 건에 수십 분이 걸린다.
     발행 자체는 텔레그램 레이트리밋 때문에 순차로 남겨둔다.
     """
     sem = asyncio.Semaphore(SUMMARY_CONCURRENCY)
+    skipped = 0
 
     async def one(it: NewsItem):
+        nonlocal skipped
         async with sem:
+            # 예산을 넘겼거나 오늘 쓸 모델이 없으면 손대지 않고 다음 실행으로 넘긴다.
+            # 이 검사가 없어서 소진된 날 요약 단계가 40분씩 돌다 job 타임아웃(20분)에
+            # 통째로 잘렸고, 그 바람에 발행도 이력 커밋도 못 한 채 9일을 헛돌았다.
+            if (deadline and time.monotonic() > deadline) or summarizer.all_exhausted():
+                skipped += 1
+                return SKIPPED
             try:
                 return await _summarize_one(it)
             except Exception as e:
                 print(f"[요약] 실패({it.title[:40]}): {e}")
                 return None
 
-    return await asyncio.gather(*[one(i) for i in items])
+    out = await asyncio.gather(*[one(i) for i in items])
+    if skipped:
+        print(f"[요약] {skipped}건은 시간/한도 부족 — 손대지 않고 다음 실행으로 넘김")
+    return out
 
 
 async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: bool,
@@ -196,7 +238,7 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
     started = time.monotonic()
     deferred = 0
 
-    ordered = publish_order(items)
+    ordered = publish_order(dedupe_items(items))
     stale = 0
 
     # 아직 안 본 것만 추려 미리 요약해둔다(순서 유지). 오래된 건 요약도 하지 않는다.
@@ -207,9 +249,11 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
     # 그러지 않으면 물량이 많은 일반 기사에 밀려 국가 탭이 계속 비어 있게 된다.
     pending.sort(key=lambda i: 0 if "/규제" in (i.region_hint or "") else 1)
     if budget:
-        # 시간 상한이 걸린 실행(CI)에서는 어차피 발행 못 할 분량까지 요약하면 낭비다.
-        # 발행에 건당 약 5초 걸린다고 보고 잘라낸다. 나머지는 다음 실행이 처리한다.
-        cap = max(1, budget // 5)
+        # 시간 상한이 걸린 실행(CI)에서는 어차피 처리 못 할 분량까지 요약하면 낭비다.
+        # 병목은 발행이 아니라 요약이다. summarizer 의 전역 스로틀(RATE_LIMIT_RPM)이
+        # 호출 하나당 60/RPM 초를 강제하므로, 그 처리량으로 상한을 계산한다.
+        per_item = 60.0 / summarizer.RATE_LIMIT_RPM
+        cap = max(1, int(budget * SUMMARIZE_BUDGET_RATIO / per_item))
         if len(pending) > cap:
             print(f"[요약] 시간 상한 고려해 {len(pending)}건 중 {cap}건만 처리")
             pending = pending[:cap]
@@ -217,10 +261,12 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
     summaries: dict[str, dict | None] = {}
     if pending and not warm:
         print(f"[요약] {len(pending)}건 병렬 처리 시작 (동시 {SUMMARY_CONCURRENCY})")
-        results = await _summarize_ahead(pending)
+        deadline = (started + budget * SUMMARIZE_BUDGET_RATIO) if budget else None
+        results = await _summarize_ahead(pending, deadline)
+        # 손대지 않은 항목은 아예 담지 않는다 → 아래에서 '다음 실행으로' 처리된다.
         summaries = {Store.make_key(i.source, i.unique_id): d
-                     for i, d in zip(pending, results)}
-        print(f"[요약] 완료 — 유효 {sum(1 for d in results if d)}건")
+                     for i, d in zip(pending, results) if d is not SKIPPED}
+        print(f"[요약] 완료 — 유효 {sum(1 for d in results if d and d is not SKIPPED)}건")
 
     for item in ordered:
         # 시간 상한을 넘으면 남은 항목은 손대지 않고 다음 실행으로 넘긴다.
@@ -232,13 +278,22 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         key = Store.make_key(item.source, item.unique_id)
         if store.is_seen(key):
             continue
+
+        # 이번 실행에서 요약하지 못한 항목(시간 예산 초과·모델 소진·처리량 상한)은
+        # 손대지 않는다. '본 것'으로 찍어버리면 발행되지 않은 채 영영 사라진다.
+        # 오래된 기사는 해당 없다 — 그건 아래에서 기록하고 버리는 게 맞다.
+        outdated = is_stale(item)
+        if budget and not warm and not outdated and key not in summaries:
+            deferred += 1
+            continue
+
         if not dry_run:
             store.mark_seen(key, item.source, item.title)
         if warm:
             continue
 
         # 오래된 기사는 발행하지 않는다(위에서 '본 것'으로 기록했으니 다시 잡히지 않는다).
-        if is_stale(item):
+        if outdated:
             stale += 1
             continue
 
@@ -247,7 +302,10 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         if data is None:
             print(f"[skip] 무관/실패: {item.title[:60]}")
             continue
-        if data.get("importance", 0) < settings.min_importance:
+        # 탭이 지정된 소스(블록미디어 리서치 등)는 사용자가 직접 고른 것이므로
+        # 중요도 문턱을 적용하지 않는다. 적용하면 분석·리서치 글이 거의 다 잘린다.
+        if (not item.force_category
+                and data.get("importance", 0) < settings.min_importance):
             print(f"[skip] 중요도 {data.get('importance')}: {item.title[:60]}")
             continue
 
@@ -256,6 +314,10 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         cat, why = country.enforce(cat, data)
         if why:
             print(f"[분류보정] {why}: {data.get('headline','')[:45]}")
+        # 수집기가 탭을 지정했으면 그게 최종이다(모델·country 판단보다 우선).
+        if item.force_category and cat != item.force_category:
+            print(f"[탭지정] {cat} → {item.force_category}: {item.title[:45]}")
+            cat = item.force_category
         if cat in MARKET_TABS and is_repost(item):
             # 금리·증시 탭은 객관성이 중요해 언론 보도만 싣는다.
             # 개인 커뮤니티에서 퍼온 시황 코멘트는 근거를 확인할 수 없어 제외.
@@ -307,6 +369,9 @@ async def collect_all(client: httpx.AsyncClient) -> list[NewsItem]:
     items: list[NewsItem] = []
     items += await binance.fetch(client)
     items += await upbit.fetch(client)
+    # 리서치를 일반 RSS 보다 **먼저** 넣는다. 같은 글이 양쪽에 걸리면
+    # dedupe_items() 가 먼저 온 쪽을 남기므로, 이래야 이슈 탭 강제가 유지된다.
+    items += await blockmedia_research.fetch(client)
     items += await rss.fetch_all(client, settings.rss_sources)
     items += await coin68.fetch(client)      # 베트남 정책 (RSS 없음)
     # 국가별 규제 뉴스 — 각국 탭을 채우는 주 공급원
@@ -327,7 +392,8 @@ async def exchange_loop(client: httpx.AsyncClient):
 
 async def rss_loop(client: httpx.AsyncClient):
     while True:
-        items = await rss.fetch_all(client, settings.rss_sources)
+        items = await blockmedia_research.fetch(client)
+        items += await rss.fetch_all(client, settings.rss_sources)
         items += await telegram_channels.fetch()
         await process_items(client, items, warm=False)
         await asyncio.sleep(settings.poll_rss_sec)

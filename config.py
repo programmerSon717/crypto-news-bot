@@ -17,7 +17,9 @@ class Settings:
 
     # Gemini (무료 티어) — 요약 엔진
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+    # 무료 티어 일일 한도가 500건으로 가장 크다. 나머지 flash 계열은 20건/일이라
+    # 주 모델로 쓰면 하루 20건 만에 발행이 멈춘다. (summarizer.FALLBACK_MODELS 참고)
 
     # (구) Anthropic — 더 이상 사용하지 않음. 되돌리고 싶을 때 참고용으로만 남겨둠.
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")

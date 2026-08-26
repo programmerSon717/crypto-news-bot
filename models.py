@@ -17,6 +17,10 @@ class NewsItem:
     image_mime: str = "image/jpeg"
     image_url: str = ""  # 아직 안 받았을 때의 원본 주소(있으면 나중에 지연 다운로드 가능)
 
+    # 지정 탭 강제. 값이 있으면 모델·country.enforce 결과를 무시하고 이 탭으로 보낸다.
+    # (예: 블록미디어 리서치는 키워드로 걸러 무조건 '이슈' 탭)
+    force_category: str = ""
+
     # 퍼온 글일 때 '진짜 출처'. 예: 채널이 캡처해 온 트윗/공지의 원문 주소.
     # 비어 있으면 발행 시 url(수집처 링크)로 대체한다.
     origin_url: str = ""
