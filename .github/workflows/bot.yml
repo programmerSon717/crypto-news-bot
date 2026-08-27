@@ -2,12 +2,14 @@ name: crypto-news-bot
 
 on:
   schedule:
-    # 10분 간격이되 **정각·10분 단위를 피해 7분씩 밀어둔다**.
-    # GitHub 은 :00 같은 '둥근' 시각에 예약이 몰려 그 슬롯을 가장 심하게 지연시킨다.
-    # 실측(2026-08-27): "*/10" 설정인데 실제 실행은 하루 6~32회, 간격 중앙값 42분.
-    # 오프셋을 주는 건 GitHub 이 권고하는 완화책이다. 그래도 무료 티어는 best-effort 라
-    # 간격을 보장하지 못한다 — 그래서 RUN_BUDGET_SEC 로 '한 번에 더 처리'를 함께 건다.
-    - cron: "7,17,27,37,47,57 * * * *"
+    # 3시간마다. **폴링 주기가 아니라 '루프 재시작' 주기다.**
+    #
+    # 예전엔 이 cron 이 곧 폴링 주기였는데, GitHub 무료 티어의 예약 실행은
+    # best-effort 라 "*/10" 을 걸어도 실제로는 하루 6~32회, 간격 중앙값 42분
+    # (최대 11시간)이었다. 즉 GitHub 이 안 깨우면 그동안 봇이 통째로 멈췄다.
+    # 이제 job 안에서 스스로 반복 폴링하므로, cron 은 루프가 끝났거나 죽었을 때
+    # 이어받는 복구용으로만 쓴다. 3시간이면 최악의 경우에도 공백이 짧다.
+    - cron: "7 */3 * * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -17,6 +19,8 @@ on:
         options: [poll, digest]
 
 # 동시 실행되면 상태 DB(botstate.sqlite3)가 꼬이므로 직렬화한다.
+# cancel-in-progress: false 라서 루프가 도는 동안 들어온 예약은 '대기'로 남았다가
+# 루프가 끝나는 즉시 이어서 시작한다 — 이게 연속 가동을 만든다.
 concurrency:
   group: crypto-news-bot
   cancel-in-progress: false
@@ -27,7 +31,8 @@ permissions:
 jobs:
   poll:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # GitHub job 상한은 6시간. 루프는 5시간 30분만 돌고 스스로 끝낸다(아래 LOOP_SECONDS).
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
 
@@ -38,7 +43,7 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: 뉴스 수집·발행 1회
+      - name: 상시 폴링 루프
         env:
           PYTHONUNBUFFERED: "1"   # 없으면 로그가 버퍼에 갇혀 취소 시 아무것도 안 남는다
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -49,40 +54,82 @@ jobs:
           # 과거 기사는 끌어오지 않는다 — 최신만 발행
           MAX_AGE_HOURS: ${{ vars.MAX_AGE_HOURS || '12' }}
           USE_TOPICS: "true"
-          # 한 번 실행에서 쓸 수 있는 시간 상한(초). 이 시간을 넘기면 남은 항목은
-          # 다음 실행으로 미룬다. job 타임아웃에 걸려 통째로 취소되면 발행 이력이
-          # 저장되지 않아 다음 실행이 같은 뉴스를 다시 발행하게 되므로, 그 전에 스스로 끊는다.
+
+          # 폴링 1회에 쓸 수 있는 시간 상한(초). 이 값이 1회 요약 상한을 정한다
+          # (요약에 60%를 쓰고, 12건/분 스로틀이라 120*0.6/5 = 14건).
           #
-          # 600 → 840 (2026-08-27). 요약 상한이 이 값에서 계산된다(600→72건, 840→100건).
-          # GitHub 이 하루 6회밖에 안 돌리는 날이 있는데, 72건 상한이면 6×72=432건이라
-          # Gemini 일일 한도(560건)를 다 못 쓰고 남긴다. 100건으로 올려야 한도를 채운다.
-          # 실행이 잦은 날엔 어차피 한도가 먼저 막으므로 부작용이 없다.
-          # 840초 = 14분. 체크아웃·설치를 더해도 job 타임아웃 20분 안에 들어온다.
-          RUN_BUDGET_SEC: "840"
-        run: python main.py --once
+          # 진짜 상한은 Gemini 무료 일일 한도 560건이다. 한 번에 많이 처리하면
+          # 몇 시간 만에 한도를 태우고 나머지 하루가 조용해진다. 14건/회 × 20분 주기면
+          # 하루 종일 꾸준히 나간다. 몰아서 빨리 받고 싶으면 이 값을 올리고,
+          # 더 길게 끌고 싶으면 낮춘다.
+          RUN_BUDGET_SEC: ${{ vars.RUN_BUDGET_SEC || '120' }}
 
-      # 매시 정시 직후 실행분에서만 지난 1시간을 정리한다.
-      # (10분 주기라 정시 실행은 시간당 한 번뿐이고, digest_log 로 중복도 막는다)
-      - name: 시간별 다이제스트
-        if: github.event.inputs.mode == 'digest' || github.event_name == 'schedule'
-        env:
-          PYTHONUNBUFFERED: "1"
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.1-flash-lite' }}
-          USE_TOPICS: "true"
+          # 폴링 간격(초). 소스 61곳을 매번 긁으므로 너무 짧으면 상대 서버가 막는다.
+          POLL_INTERVAL_SEC: ${{ vars.POLL_INTERVAL_SEC || '1200' }}
+          # 루프 총 가동 시간(초). 5시간 30분 — job 타임아웃(350분) 앞에서 스스로 끝낸다.
+          LOOP_SECONDS: ${{ vars.LOOP_SECONDS || '19800' }}
         run: |
-          # KST 기준 분(minute)이 10분 미만일 때만 = 매시 첫 실행
-          MIN=$(TZ=Asia/Seoul date +%-M)
-          if [[ "${{ github.event.inputs.mode }}" == "digest" || "$MIN" -lt 10 ]]; then
-            python main.py --digest
-          else
-            echo "정시 실행이 아님(분=$MIN) — 다이제스트 생략"
-          fi
+          set -u
 
-      - name: 발행 이력 저장
-        # 실패·취소되더라도 이미 발행한 것까지는 반드시 기록해야 중복 발행을 막는다.
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # 발행분을 리포에 즉시 반영한다. **매 폴링마다** 해야 한다 —
+          # job 이 중간에 취소돼도 이미 발행한 것까지는 기록이 남아야
+          # 다음 실행이 같은 뉴스를 다시 발행하지 않는다.
+          # 발행이 없으면 커밋하지 않는다(저장소가 불필요하게 불어나는 걸 막는다).
+          save_state() {
+            if [[ -z "$(git status --porcelain botstate.sqlite3)" ]]; then
+              echo "  [상태] 새 발행 없음 — 커밋 생략"
+              return
+            fi
+            git add botstate.sqlite3
+            git commit -q -m "chore: 발행 이력 갱신 [skip ci]"
+            # rebase 가 중간에 멈추면 .git 이 rebase 상태로 남아 그 뒤 회차의 commit 이
+            # 전부 실패한다. 5시간 반 동안 16회를 도는 루프라 반드시 원상복구해야 한다.
+            if ! git pull -q --rebase --autostash; then
+              git rebase --abort 2>/dev/null || true
+              echo "  [상태] rebase 실패 — 되돌리고 다음 회차에 재시도"
+            fi
+            if git push -q; then
+              echo "  [상태] 발행 이력 커밋·푸시 완료"
+            else
+              echo "  [상태] 푸시 실패 — 다음 회차에 재시도"
+            fi
+          }
+
+          LOOP_END=$(( $(date +%s) + LOOP_SECONDS ))
+          ROUND=0
+
+          while :; do
+            ROUND=$(( ROUND + 1 ))
+            echo "::group::폴링 #${ROUND}  ($(TZ=Asia/Seoul date '+%m-%d %H:%M KST'))"
+
+            # 폴링 1회. 실패해도 루프를 세우지 않는다 — 다음 회차가 이어받는다.
+            python main.py --once || echo "  [경고] 폴링 실패 — 다음 회차로 넘어간다"
+
+            # 시간별 다이제스트: KST 기준 매시 첫 회차에서만.
+            # 중복은 digest_log 가 막지만, 불필요한 모델 호출을 줄이려 여기서도 건다.
+            MIN=$(TZ=Asia/Seoul date +%-M)
+            if [[ "${{ github.event.inputs.mode }}" == "digest" || "$MIN" -lt 20 ]]; then
+              python main.py --digest || echo "  [경고] 다이제스트 실패"
+            fi
+
+            save_state
+            echo "::endgroup::"
+
+            # 다음 회차가 루프 종료 시각을 넘기면 여기서 끝낸다.
+            # 대기 중이던 예약 실행이 곧바로 이어받아 다음 루프를 시작한다.
+            NEXT=$(( $(date +%s) + POLL_INTERVAL_SEC ))
+            if [[ $NEXT -ge $LOOP_END ]]; then
+              echo "루프 종료 — ${ROUND}회 폴링 완료. 다음 실행이 이어받는다."
+              break
+            fi
+            sleep "$POLL_INTERVAL_SEC"
+          done
+
+      - name: 발행 이력 저장 (마무리)
+        # 루프 중간에 취소·실패했을 때를 위한 안전망. 정상 종료면 보통 커밋할 게 없다.
         if: always()
         run: |
           if [[ -n "$(git status --porcelain botstate.sqlite3)" ]]; then
@@ -90,7 +137,6 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add botstate.sqlite3
             git commit -m "chore: 발행 이력 갱신 [skip ci]"
-            # 다른 실행이 먼저 푸시했을 수 있으므로 rebase 후 재시도
             git pull --rebase --autostash || true
             git push
           else
