@@ -71,10 +71,16 @@ def render_category_digest(category: str, label: str, count: int, data: dict) ->
 
 def render_overview(label: str, total: int, data: dict) -> str:
     e = html.escape
-    lines = "\n".join(
-        f"• <b>{e(tab_name(row.get('category', '')))}</b> — {e(row.get('line', ''))}"
-        for row in data.get("by_category", [])
-    )
+    blocks = []
+    for row in data.get("by_category", []):
+        name = e(tab_name(row.get("category", "")))
+        # 새 형식은 lines(여러 줄), 옛 형식은 line(한 줄) — 둘 다 받는다.
+        items = row.get("lines") or ([row["line"]] if row.get("line") else [])
+        if not items:
+            continue
+        blocks.append(f"<b>{name}</b>")
+        blocks += [f"• {e(x)}" for x in items]
+    lines = "\n".join(blocks)
     parts = [
         f"🕐 <b>{e(label)} 브리핑</b>",
         "",
