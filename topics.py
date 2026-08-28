@@ -30,23 +30,23 @@ API = f"https://api.telegram.org/bot{settings.telegram_bot_token}"
 # 키(내부 식별자)는 모델이 분류값으로 뱉는 문자열이므로 탭 이름과 동일하게 유지한다.
 CATEGORIES = {
     "국내정책": ("🇰🇷한국정책", 0x6FB9F0),
-    "US Policy": ("US Policy", 0xFB6F5F),
+    "US Policy": ("🇺🇸미국정책", 0xFB6F5F),
     "Japan Policy": ("🇯🇵일본정책", 0xFF93B2),
     "Hong Kong Policy": ("🇭🇰홍콩정책", 0xFB6F5F),
     "Singapore Policy": ("🇸🇬싱가폴정책", 0x8EEE98),
     "UAE Policy": ("🇦🇪UAE정책", 0x8EEE98),
-    "Vietnam Policy": ("Vietnam Policy", 0xFFD67E),
+    "Vietnam Policy": ("🇻🇳베트남정책", 0xFFD67E),
     "해외정책": ("🌎해외정책", 0xFFD67E),
     # 금리·증시는 정책과 시장 사이에 걸쳐 있어 '이슈'에 묻히기 쉬우므로 따로 뺀다.
-    "Korea Rates": ("Korea Rates", 0x6FB9F0),
+    "Korea Rates": ("🇰🇷한국매크로", 0x6FB9F0),
     "US Rates": ("🇺🇸미국매크로", 0xFB6F5F),
-    "Korea Equities": ("Korea Equities", 0x6FB9F0),
-    "US Equities": ("US Equities", 0xFB6F5F),
+    "Korea Equities": ("🇰🇷한국증시", 0x6FB9F0),
+    "US Equities": ("🇺🇸미국증시", 0xFB6F5F),
     # 중국은 물량이 많아 따로 뺀다(인민은행·위안화·규제·상하이/항셍 전부).
     "China": ("🇨🇳중국정책", 0xFB6F5F),
     # 미국·한국·중국이 아닌 나라의 거시지표·통화정책(일본은행, ECB 등).
     # 이 탭이 없으면 모델이 갈 곳 없는 뉴스를 US Rates 에 억지로 밀어넣는다.
-    "Global Macro": ("Global Macro", 0xCB86DB),
+    "Global Macro": ("🌐글로벌매크로", 0xCB86DB),
     "이슈": ("🚨주요이슈", 0xCB86DB),
 }
 

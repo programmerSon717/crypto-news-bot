@@ -15,7 +15,11 @@ from collectors import fed_speech, rss, te_calendar, tradingeconomics
 from config import settings
 from models import NewsItem
 
-# 사용자가 지정한 탭. 지표·정책 이벤트는 나라와 무관하게 여기로 모은다.
+# 지표·정책 이벤트가 갈 탭.
+#   미국 건은 🇺🇸미국매크로(키 'US Rates'), 나머지 나라는 🌐글로벌매크로.
+#   예전에는 전부 Global Macro 로 몰았는데, 사용자가 "미국 매크로는 미국매크로 탭에
+#   모으고 싶다"고 해서 나눈다. country.enforce() 도 원래 이 방향으로 보정한다.
+US_TAB = "US Rates"
 TARGET_TAB = "Global Macro"
 
 # FOMC·미국 거시·잭슨홀은 여기에도 한 부 더 올린다(사용자 지시).
@@ -23,17 +27,28 @@ TARGET_TAB = "Global Macro"
 MIRROR_TAB = "이슈"
 
 # 미러 대상 판정에 쓰는 미국 관련 표현
-_US = re.compile(r"미국|美|연준|연방준비|\bfed\b|\bfomc\b|united states|\bu\.s\.|워시|잭슨홀|jackson\s?hole", re.I)
+_US = re.compile(
+    r"미국|美|연준|연방준비|\bfed\b|\bfomc\b|united states|\bu\.s\.|\bUS\b|"
+    r"워시|잭슨홀|jackson\s?hole")
+
+
+def is_us(title: str, region_hint: str) -> bool:
+    return bool(_US.search(f"{title} {region_hint}"))
+
+
+def target_tab(title: str, region_hint: str) -> str:
+    """미국 건은 미국매크로 탭, 나머지는 글로벌매크로 탭."""
+    return US_TAB if is_us(title, region_hint) else TARGET_TAB
 
 
 def should_mirror(label: str, title: str, region_hint: str) -> bool:
     """이슈 탭에도 보낼 것인가.
 
-    대상: FOMC · 잭슨홀 · 미국 거시지표. 그 외 나라의 지표는 Global Macro 에만 둔다.
+    대상: FOMC · 잭슨홀 · 미국 거시. 그 외 나라의 지표는 매크로 탭에만 둔다.
     """
     if label in ("FOMC", "잭슨홀"):
         return True
-    return bool(_US.search(f"{title} {region_hint}"))
+    return is_us(title, region_hint)
 
 # 제목에 하나라도 걸리면 긴급으로 본다. **제목만 본다** — 본문까지 보면
 # 크립토 기사에 스치듯 언급된 것까지 걸려 오탐이 급증한다.
@@ -86,7 +101,7 @@ async def collect(client: httpx.AsyncClient) -> list[NewsItem]:
     # 기사보다 빠르다. 발표 즉시 실제/예상/직전 값이 채워지므로 그대로 전한다.
     # 발표 직후 창(기본 45분)을 벗어난 과거 이벤트는 아예 내보내지 않는다.
     for it in await te_calendar.fetch(client):
-        it.force_category = TARGET_TAB
+        it.force_category = target_tab(it.title, it.region_hint)
         if should_mirror("지표", it.title, it.region_hint):
             it.mirror_to = MIRROR_TAB
         hits.append(it)
@@ -94,7 +109,7 @@ async def collect(client: httpx.AsyncClient) -> list[NewsItem]:
     # ── 2. 지표 발표 '기사' (구조화된 판정) ──
     for it in await tradingeconomics.fetch(client):
         label = it.region_hint.split("/")[0].removeprefix("지표:") or "지표"
-        it.force_category = TARGET_TAB
+        it.force_category = target_tab(it.title, it.region_hint)
         if should_mirror(label, it.title, it.region_hint):
             it.mirror_to = MIRROR_TAB
         hits.append(it)
@@ -103,7 +118,7 @@ async def collect(client: httpx.AsyncClient) -> list[NewsItem]:
     # press_all.xml 에는 연설이 안 들어간다. 그래서 잭슨홀 연설 원문이 채널에
     # 도달한 적이 없고 "연설 시작"류 속보만 나갔다. 전용 피드 + 본문 수집으로 해결.
     for it in await fed_speech.fetch(client):
-        it.force_category = TARGET_TAB
+        it.force_category = US_TAB     # 연준은 언제나 미국
         it.mirror_to = MIRROR_TAB      # 연준 의장 발언은 언제나 이슈 탭에도
         it.deep = True                 # bullet 10~16개짜리 심층 요약
         hits.append(it)
@@ -114,8 +129,8 @@ async def collect(client: httpx.AsyncClient) -> list[NewsItem]:
         label = urgency_of(it.title)
         if not label:
             continue
-        it.force_category = TARGET_TAB
         it.region_hint = f"{it.region_hint}/긴급:{label}".lstrip("/")
+        it.force_category = target_tab(it.title, it.region_hint)
         if should_mirror(label, it.title, it.region_hint):
             it.mirror_to = MIRROR_TAB
         # FOMC 성명·잭슨홀은 시장이 문장 하나까지 뜯어본다 → 심층 요약
