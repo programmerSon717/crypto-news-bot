@@ -67,7 +67,7 @@ def render(data: dict, url: str) -> str:
     """
     e = html.escape
     bullets = "\n".join(f"• {e(b)}" for b in data.get("bullets", []))
-    tags = " ".join(_clean_tags(data.get("hashtags", [])))
+    tags = _build_tags(data)
 
     def field(key: str, emoji: str) -> str:
         """값 앞에 이모지가 이미 붙어 오는 경우가 있어(스키마 설명을 따라함) 중복을 제거한다."""
@@ -136,32 +136,49 @@ _DROPPABLE = {"일본", "홍콩", "아시아", "싱가포르", "베트남", "중
               "미국", "영국", "UAE", "규제", "정책", "크립토"}
 
 
-def _clean_tags(tags: list) -> list:
-    """해시태그에서 내부 분류 키를 걸러낸다.
+# 해시태그에서 빼는 것들.
+#   - 내부 분류 키(US Rates → #US_Rates). 실제로 발행돼서 걸러내게 됐다.
+#   - 막연한 #국내/#해외. 탭 이름 태그가 그 역할을 더 정확히 하므로 겹치면 헷갈린다.
+_VAGUE_TAGS = {"국내", "해외", "국내외"}
 
-    모델이 카테고리 값을 그대로 해시태그로 붙여 오는 경우가 있다(실제로 `#US_Rates`
-    가 발행됐다). 내부 식별자라 독자에게는 의미가 없고 형식도 어색하다.
+
+def _tab_tag(category: str) -> str:
+    """분류 키 → 탭 이름 해시태그. 'US Rates' → '#미국매크로'
+
+    이모지·공백을 떼고 글자만 남긴다. **코드가 직접 만든다** — 모델에 맡기면
+    탭과 다른 값을 뱉어 태그와 실제 탭이 따로 논다.
     """
     import topics as _topics
-    # **여러 단어로 된 키만** 막는다. 'US Rates' → '#US_Rates' 처럼 기계가 만든 티가
-    # 나는 것들이다. 한 단어짜리(China·이슈·국내정책)는 해시태그로 써도 자연스러워
-    # 그대로 둔다 — 넓게 막으면 멀쩡한 태그까지 사라진다.
+    entry = _topics.CATEGORIES.get(category)
+    name = entry[0] if entry else category
+    clean = re.sub(r"[^0-9A-Za-z가-힣]", "", name)
+    return f"#{clean}" if clean else ""
+
+
+def _build_tags(data: dict) -> str:
+    """탭 이름 태그를 맨 앞에 두고, 모델이 준 주제 태그를 뒤에 붙인다."""
+    import topics as _topics
     banned = set()
     for key in _topics.CATEGORIES:
-        if " " not in key:
-            continue
-        banned |= {key.replace(" ", "").lower(), key.replace(" ", "_").lower()}
-    out = []
-    for t in tags:
+        if " " in key:                       # 여러 단어짜리 내부 키만 막는다
+            banned |= {key.replace(" ", "").lower(), key.replace(" ", "_").lower()}
+
+    out: list[str] = []
+    first = _tab_tag(data.get("category", ""))
+    if first:
+        out.append(first)
+    for t in data.get("hashtags", []):
         t = (t or "").strip()
         if not t:
             continue
         if not t.startswith("#"):
             t = "#" + t
-        if t[1:].replace(" ", "").lower() in banned:
+        body = t[1:].replace(" ", "")
+        if body.lower() in banned or body in _VAGUE_TAGS:
             continue
-        out.append(t)
-    return out
+        if t not in out:
+            out.append(t)
+    return " ".join(out[:4])          # 너무 많으면 지저분하다
 
 
 def source_label(raw: str) -> str:
