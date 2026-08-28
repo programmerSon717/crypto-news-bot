@@ -1,8 +1,40 @@
 """발행 이력 저장소. URL(또는 소스별 고유 ID) 기준으로 중복 발행을 막는다."""
 import hashlib
+import re
 import sqlite3
 import time
 from contextlib import contextmanager
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+# 같은 기사인데 URL 만 달라 보이게 만드는 추적 파라미터.
+# 예: 블록미디어는 RSS 링크에 ?utm_source=general&utm_medium=rss 를 붙인다.
+_TRACKING = re.compile(r"^(utm_.*|fbclid|gclid)$")
+
+
+def normalize_url(url: str) -> str:
+    """같은 기사면 같은 문자열이 되도록 URL 을 정리한다.
+
+    한 매체를 여러 피드로 등록하면(일반 피드 + 규제 피드 등) 같은 기사가
+    두 번 들어온다. 중복제거 키는 '소스이름+고유값' 해시라 소스 이름이 다르면
+    같은 기사도 다른 키가 되어 두 번 발행된다. 그걸 막으려고 URL 을 정규화해
+    소스와 무관한 두 번째 잣대로 쓴다.
+
+    스킴(http/https)과 www, 끝 슬래시, 추적 파라미터, 프래그먼트를 떼어낸다.
+    기사 식별에 쓰이는 일반 쿼리(?id=123 등)는 남긴다.
+    """
+    if not url:
+        return ""
+    try:
+        p = urlsplit(url.strip())
+    except ValueError:
+        return url.strip().lower()
+    host = (p.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    query = urlencode([(k, v) for k, v in parse_qsl(p.query, keep_blank_values=True)
+                       if not _TRACKING.match(k)])
+    path = p.path.rstrip("/") or "/"
+    return urlunsplit(("", host, path, query, "")).lstrip("/") or url.strip().lower()
 
 
 def _as_float(v) -> float | None:
@@ -49,6 +81,32 @@ class Store:
                         "photo_file_id", "origin_at"):
                 if col not in cols:
                     c.execute(f"ALTER TABLE published ADD COLUMN {col} TEXT")
+            # 소스 이름과 무관하게 '이 기사를 이미 봤는가'를 판정하는 색인.
+            # seen 은 소스이름+고유값 해시라 같은 기사가 다른 피드로 들어오면 못 잡는다.
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS seen_urls (
+                    url_key TEXT PRIMARY KEY,
+                    source TEXT,
+                    title TEXT,
+                    first_seen REAL
+                )"""
+            )
+            # 이미 발행된 글들을 색인에 한 번 채워 넣는다(표가 비었을 때만).
+            # 이게 없으면 도입 직후 과거 기사가 다시 발행될 수 있다.
+            if not c.execute("SELECT 1 FROM seen_urls LIMIT 1").fetchone():
+                rows = c.execute(
+                    "SELECT source_url, headline FROM published WHERE source_url IS NOT NULL"
+                ).fetchall()
+                now = time.time()
+                c.executemany(
+                    "INSERT OR IGNORE INTO seen_urls (url_key, source, title, first_seen)"
+                    " VALUES (?,?,?,?)",
+                    [(normalize_url(u), "backfill", t or "", now)
+                     for u, t in rows if normalize_url(u)],
+                )
+                if rows:
+                    print(f"[store] 기존 발행 {len(rows)}건을 URL 색인에 등록")
+
             # 다이제스트 중복 발행 방지용 — 어느 구간까지 요약했는지 기록
             c.execute(
                 """CREATE TABLE IF NOT EXISTS digest_log (
@@ -76,6 +134,25 @@ class Store:
         with self._conn() as c:
             row = c.execute("SELECT 1 FROM seen WHERE key=?", (key,)).fetchone()
             return row is not None
+
+    def is_url_seen(self, url: str) -> bool:
+        """소스 이름과 무관하게, 이 기사를 이미 처리했는가."""
+        k = normalize_url(url)
+        if not k:
+            return False
+        with self._conn() as c:
+            return c.execute("SELECT 1 FROM seen_urls WHERE url_key=?", (k,)).fetchone() is not None
+
+    def mark_url_seen(self, url: str, source: str, title: str):
+        k = normalize_url(url)
+        if not k:
+            return
+        with self._conn() as c:
+            c.execute(
+                "INSERT OR IGNORE INTO seen_urls (url_key, source, title, first_seen)"
+                " VALUES (?,?,?,?)",
+                (k, source, title, time.time()),
+            )
 
     def mark_seen(self, key: str, source: str, title: str):
         with self._conn() as c:

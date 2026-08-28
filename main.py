@@ -30,7 +30,7 @@ from config import settings
 from models import NewsItem
 import publisher
 from publisher import publish
-from store import Store
+from store import Store, normalize_url
 import summarizer
 from summarizer import summarize, summarize_insight
 
@@ -151,12 +151,20 @@ def dedupe_items(items: list[NewsItem]) -> list[NewsItem]:
     막았지만, 어느 쪽이 먼저 처리되느냐에 따라 탭이 달라진다.
     수집 순서(리서치 먼저)를 그대로 존중해 여기서 잘라낸다.
     """
-    seen, out = set(), []
+    seen_keys, seen_urls, out = set(), set(), []
     for it in items:
         key = Store.make_key(it.source, it.unique_id)
-        if key in seen:
+        if key in seen_keys:
             continue
-        seen.add(key)
+        # 같은 매체를 여러 피드로 등록하면(일반 + 규제 등) 같은 기사가 두 번 들어온다.
+        # 키는 소스이름이 섞여 있어 못 잡으므로 URL 로 한 번 더 거른다.
+        # 여기서 안 거르면 두 건 다 요약돼 무료 한도를 두 배로 태운다.
+        url_key = normalize_url(it.url)
+        if url_key and url_key in seen_urls:
+            continue
+        seen_keys.add(key)
+        if url_key:
+            seen_urls.add(url_key)
         out.append(it)
     dropped = len(items) - len(out)
     if dropped:
@@ -237,13 +245,17 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
     budget = settings.run_budget_sec
     started = time.monotonic()
     deferred = 0
+    dup = 0
 
     ordered = publish_order(dedupe_items(items))
     stale = 0
 
     # 아직 안 본 것만 추려 미리 요약해둔다(순서 유지). 오래된 건 요약도 하지 않는다.
+    # URL 중복도 여기서 걸러야 한다. 발행 루프에서만 막으면 이미 요약이 끝난 뒤라
+    # 무료 한도를 그냥 버리게 된다.
     pending = [i for i in ordered
                if not store.is_seen(Store.make_key(i.source, i.unique_id))
+               and not store.is_url_seen(i.url)
                and not is_stale(i)]
     # 모델 호출 한도가 빡빡하므로 **국가별 규제·정책 기사를 먼저** 처리한다.
     # 그러지 않으면 물량이 많은 일반 기사에 밀려 국가 탭이 계속 비어 있게 된다.
@@ -279,6 +291,15 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         if store.is_seen(key):
             continue
 
+        # 소스 이름이 달라 키는 새것이지만 이미 처리한 기사일 수 있다
+        # (같은 매체의 일반 피드 / 규제 피드에 같은 글이 실리는 경우).
+        # '본 것'으로만 찍고 넘어가 다시 수집되지 않게 한다.
+        if store.is_url_seen(item.url):
+            if not dry_run:
+                store.mark_seen(key, item.source, item.title)
+            dup += 1
+            continue
+
         # 이번 실행에서 요약하지 못한 항목(시간 예산 초과·모델 소진·처리량 상한)은
         # 손대지 않는다. '본 것'으로 찍어버리면 발행되지 않은 채 영영 사라진다.
         # 오래된 기사는 해당 없다 — 그건 아래에서 기록하고 버리는 게 맞다.
@@ -289,6 +310,7 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
 
         if not dry_run:
             store.mark_seen(key, item.source, item.title)
+            store.mark_url_seen(item.url, item.source, item.title)
         if warm:
             continue
 
@@ -352,6 +374,8 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         print(f"[집계] 시간 상한({budget}초) 도달 — {deferred}건은 다음 실행으로 미룸")
     if stale:
         print(f"[집계] {settings.max_age_hours}시간 초과된 과거 기사 {stale}건 제외")
+    if dup:
+        print(f"[집계] 다른 피드로 이미 처리한 같은 기사 {dup}건 제외")
 
 
 async def recent_tg_web(client: httpx.AsyncClient, hours: int = 6) -> list[NewsItem]:

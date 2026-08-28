@@ -126,7 +126,9 @@ class Settings:
         ("토큰포스트", "https://www.tokenpost.kr/rss", "국내"),
         ("블록체인투데이", "https://www.blockchaintoday.co.kr/rss/allArticle.xml", "국내"),
         ("금융위원회 보도자료", "http://www.fsc.go.kr/about/fsc_bbs_rss/?fid=0111", "국내"),
-        ("블록미디어 정책", "https://www.blockmedia.co.kr/feed?cat=policy", "국내"),
+        # ("블록미디어 정책", ".../feed?cat=policy") 제거 (2026-08-28).
+        # cat=policy 필터가 먹지 않아 일반 피드와 **완전히 동일한 10건**을 돌려준다.
+        # 소스 이름만 달라 중복제거 키가 갈리는 바람에 같은 기사가 두 번 발행됐다.
         # 일본 — 현지 매체라야 금융청(FSA) 움직임이 제때 잡힌다
         ("CoinPost(일본)", "https://coinpost.jp/?feed=rss2", "일본"),
         ("あたらしい経済(일본)", "https://www.neweconomy.jp/feed", "일본"),
