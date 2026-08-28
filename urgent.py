@@ -11,7 +11,7 @@ import re
 
 import httpx
 
-from collectors import rss, te_calendar, tradingeconomics
+from collectors import fed_speech, rss, te_calendar, tradingeconomics
 from config import settings
 from models import NewsItem
 
@@ -93,7 +93,15 @@ async def collect(client: httpx.AsyncClient) -> list[NewsItem]:
             it.mirror_to = MIRROR_TAB
         hits.append(it)
 
-    # ── 3. 정책 이벤트 (제목 판정) ──
+    # ── 3. 연준 연설 본문 ──
+    # press_all.xml 에는 연설이 안 들어간다. 그래서 잭슨홀 연설 원문이 채널에
+    # 도달한 적이 없고 "연설 시작"류 속보만 나갔다. 전용 피드 + 본문 수집으로 해결.
+    for it in await fed_speech.fetch(client):
+        it.force_category = TARGET_TAB
+        it.mirror_to = MIRROR_TAB      # 연준 의장 발언은 언제나 이슈 탭에도
+        hits.append(it)
+
+    # ── 4. 정책 이벤트 (제목 판정) ──
     rss_items = await rss.fetch_all(client, settings.urgent_sources)
     for it in rss_items:
         label = urgency_of(it.title)
