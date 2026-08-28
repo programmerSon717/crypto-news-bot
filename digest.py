@@ -43,11 +43,21 @@ def window_bounds(hours: int, now: datetime | None = None) -> tuple[float, float
     return start.timestamp(), end.timestamp(), label
 
 
+def tab_name(category: str) -> str:
+    """내부 분류 키 → 독자에게 보이는 탭 이름.
+
+    'Global Macro' 같은 내부 식별자가 그대로 발행되고 있었다. 탭 이름과 달라
+    독자가 어느 탭 얘기인지 알 수 없다.
+    """
+    entry = topics.CATEGORIES.get(category)
+    return entry[0] if entry else category
+
+
 def render_category_digest(category: str, label: str, count: int, data: dict) -> str:
     e = html.escape
     bullets = "\n".join(f"• {e(b)}" for b in data.get("bullets", []))
     parts = [
-        f"🗂 <b>{e(category)} · {e(label)} 정리</b>",
+        f"🗂 <b>{e(tab_name(category))} · {e(label)} 정리</b>",
         "",
         e(data.get("summary", "")),
     ]
@@ -62,7 +72,7 @@ def render_category_digest(category: str, label: str, count: int, data: dict) ->
 def render_overview(label: str, total: int, data: dict) -> str:
     e = html.escape
     lines = "\n".join(
-        f"• <b>{e(row.get('category', ''))}</b> — {e(row.get('line', ''))}"
+        f"• <b>{e(tab_name(row.get('category', '')))}</b> — {e(row.get('line', ''))}"
         for row in data.get("by_category", [])
     )
     parts = [
