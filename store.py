@@ -77,8 +77,11 @@ class Store:
             # 재정렬(--resort)에 필요한 것들:
             #   photo_file_id — 사진을 다시 올릴 때 재업로드 없이 그대로 재사용
             #   origin_at     — 기사/트윗의 원래 게시 시각. 정렬 기준(발행 시각이 아님)
+            # mirror_ids: 같은 글을 다른 탭에도 올렸을 때 그쪽 message_id(쉼표 구분).
+            # extra_ids 와 섞으면 안 된다 — extra_ids 는 '같은 탭의 딸린 메시지'라
+            # --resort 가 한 탭으로 다시 몰아넣는다. 미러는 다른 탭에 있어야 한다.
             for col in ("category", "lede", "text", "extra_ids",
-                        "photo_file_id", "origin_at"):
+                        "photo_file_id", "origin_at", "mirror_ids"):
                 if col not in cols:
                     c.execute(f"ALTER TABLE published ADD COLUMN {col} TEXT")
             # 소스 이름과 무관하게 '이 기사를 이미 봤는가'를 판정하는 색인.
@@ -165,31 +168,34 @@ class Store:
                          source_url: str, headline: str,
                          category: str = "", lede: str = "", text: str = "",
                          extra_ids: list | None = None, photo_file_id: str = "",
-                         origin_at: float | None = None):
+                         origin_at: float | None = None,
+                         mirror_ids: list | None = None):
         with self._conn() as c:
             c.execute(
                 """INSERT OR REPLACE INTO published
                    (key, message_id, thread_id, source_url, headline,
                     published_at, category, lede, text, extra_ids,
-                    photo_file_id, origin_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    photo_file_id, origin_at, mirror_ids)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (key, message_id, thread_id, source_url, headline, time.time(),
                  category, lede, text, ",".join(str(i) for i in (extra_ids or [])),
-                 photo_file_id, origin_at),
+                 photo_file_id, origin_at,
+                 ",".join(str(i) for i in (mirror_ids or []))),
             )
 
     def all_published(self) -> list[dict]:
         with self._conn() as c:
             rows = c.execute(
                 """SELECT key, message_id, thread_id, category, headline, lede, text,
-                          extra_ids, photo_file_id, origin_at
+                          extra_ids, photo_file_id, origin_at, mirror_ids
                    FROM published ORDER BY published_at"""
             ).fetchall()
         return [
             {"key": r[0], "message_id": r[1], "thread_id": r[2], "category": r[3] or "",
              "headline": r[4] or "", "lede": r[5] or "", "text": r[6] or "",
              "extra_ids": [int(x) for x in (r[7] or "").split(",") if x.strip()],
-             "photo_file_id": r[8] or "", "origin_at": _as_float(r[9])}
+             "photo_file_id": r[8] or "", "origin_at": _as_float(r[9]),
+             "mirror_ids": [int(x) for x in (r[10] or "").split(",") if x.strip()]}
             for r in rows
         ]
 

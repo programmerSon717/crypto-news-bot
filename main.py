@@ -361,12 +361,27 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         if msg_id:
             _, origin = publisher.origin_of(data)
             ids = [i for i in data.get("_message_ids", []) if i != msg_id]
+
+            # 지정 탭 외에 한 부 더 보내야 하는 글(FOMC·미국 거시·잭슨홀 → 이슈 탭).
+            # 이미 렌더된 본문을 그대로 재사용하므로 모델을 다시 부르지 않는다.
+            mirror_ids = []
+            if item.mirror_to and item.mirror_to != cat:
+                mtid = topics_thread_id(item.mirror_to)
+                body = data.get("_rendered", "")
+                if mtid and body:
+                    mid2 = await publisher.send_raw(client, body, mtid)
+                    if mid2:
+                        mirror_ids.append(mid2)
+                        print(f"[미러] {cat} → {item.mirror_to} 탭에도 발행 "
+                              f"({data['headline'][:34]})")
+
             store.record_published(key, msg_id, topics_thread_id(cat),
                                    origin or item.url, data["headline"],
                                    category=cat, lede=data.get("lede", ""),
                                    text=data.get("_rendered", ""), extra_ids=ids,
                                    photo_file_id=data.get("_photo_file_id", ""),
-                                   origin_at=item.published_at)
+                                   origin_at=item.published_at,
+                                   mirror_ids=mirror_ids)
         await asyncio.sleep(5)  # 항목당 사진+본문 2건이 나가므로 여유를 둔다
 
     total = sum(stats.values())

@@ -95,7 +95,8 @@ class Settings:
     # investing.com 은 경제지표 발표를 나라별로 가장 빨리 싣는다.
     # (경제 캘린더 페이지·AJAX 는 Cloudflare 403 이라 RSS 만 쓸 수 있다)
     urgent_sources: list = field(default_factory=lambda: [
-        ("Investing 경제지표", "https://kr.investing.com/rss/news_95.rss", "지표"),
+        # news_95(경제 지표 뉴스)는 뺐다 — Trading Economics 가 같은 발표를
+        # 구조화된 형태로 더 정확히 주므로, 함께 두면 같은 지표가 두 번 발행된다.
         ("Investing 경제뉴스", "https://kr.investing.com/rss/news_14.rss", "지표"),
         # FOMC 성명·연준 의장 연설의 1차 출처. 매체보다 먼저 뜬다.
         ("연준 보도자료", "https://www.federalreserve.gov/feeds/press_all.xml", "미국"),

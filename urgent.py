@@ -11,12 +11,29 @@ import re
 
 import httpx
 
-from collectors import rss
+from collectors import rss, tradingeconomics
 from config import settings
 from models import NewsItem
 
 # 사용자가 지정한 탭. 지표·정책 이벤트는 나라와 무관하게 여기로 모은다.
 TARGET_TAB = "Global Macro"
+
+# FOMC·미국 거시·잭슨홀은 여기에도 한 부 더 올린다(사용자 지시).
+# 채널에서 가장 많이 보는 탭이라 미국 관련 굵직한 건은 놓치면 안 된다.
+MIRROR_TAB = "이슈"
+
+# 미러 대상 판정에 쓰는 미국 관련 표현
+_US = re.compile(r"미국|美|연준|연방준비|\bfed\b|\bfomc\b|united states|\bu\.s\.|워시|잭슨홀|jackson\s?hole", re.I)
+
+
+def should_mirror(label: str, title: str, region_hint: str) -> bool:
+    """이슈 탭에도 보낼 것인가.
+
+    대상: FOMC · 잭슨홀 · 미국 거시지표. 그 외 나라의 지표는 Global Macro 에만 둔다.
+    """
+    if label in ("FOMC", "잭슨홀"):
+        return True
+    return bool(_US.search(f"{title} {region_hint}"))
 
 # 제목에 하나라도 걸리면 긴급으로 본다. **제목만 본다** — 본문까지 보면
 # 크립토 기사에 스치듯 언급된 것까지 걸려 오탐이 급증한다.
@@ -49,18 +66,38 @@ def urgency_of(title: str) -> str | None:
 
 
 async def collect(client: httpx.AsyncClient) -> list[NewsItem]:
-    """긴급 소스만 훑어 지정 키워드에 걸린 항목을 돌려준다."""
-    items = await rss.fetch_all(client, settings.urgent_sources)
+    """긴급 소스를 훑어 지표·정책 이벤트만 돌려준다.
+
+    두 경로를 쓴다:
+      - Trading Economics: `category` 필드로 지표 종류를 **정확히** 판정한다.
+        나라별 지표 발표의 주 공급원.
+      - RSS(투자·연준): 제목 정규식으로 판정한다. FOMC 성명·연준 발언·잭슨홀처럼
+        지표가 아닌 정책 이벤트를 잡는 경로.
+    """
     hits: list[NewsItem] = []
-    for it in items:
+
+    # ── 1. 지표 발표 (구조화된 판정) ──
+    for it in await tradingeconomics.fetch(client):
+        label = it.region_hint.split("/")[0].removeprefix("지표:") or "지표"
+        it.force_category = TARGET_TAB
+        if should_mirror(label, it.title, it.region_hint):
+            it.mirror_to = MIRROR_TAB
+        hits.append(it)
+
+    # ── 2. 정책 이벤트 (제목 판정) ──
+    rss_items = await rss.fetch_all(client, settings.urgent_sources)
+    for it in rss_items:
         label = urgency_of(it.title)
         if not label:
             continue
-        # 지표·정책 이벤트는 지정 탭으로 강제한다(중요도 문턱도 적용되지 않는다).
         it.force_category = TARGET_TAB
         it.region_hint = f"{it.region_hint}/긴급:{label}".lstrip("/")
+        if should_mirror(label, it.title, it.region_hint):
+            it.mirror_to = MIRROR_TAB
         hits.append(it)
-    if items:
-        print(f"[긴급] 소스 {len(settings.urgent_sources)}곳에서 {len(items)}건 중 "
-              f"{len(hits)}건이 지표·정책 이벤트")
+
+    mirrored = sum(1 for i in hits if i.mirror_to)
+    if hits or rss_items:
+        print(f"[긴급] 지표·정책 이벤트 {len(hits)}건 "
+              f"(그중 {mirrored}건은 {MIRROR_TAB} 탭에도 발행)")
     return hits

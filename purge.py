@@ -64,7 +64,8 @@ async def run(client, store, only: str | None = None, dry_run: bool = False) -> 
     gone = 0
     for r in drop:
         ok = False
-        for mid in [r["message_id"], *r.get("extra_ids", [])]:
+        # 미러(다른 탭에 올린 사본)도 함께 지운다. 안 지우면 한쪽 탭에만 남는다.
+        for mid in [r["message_id"], *r.get("extra_ids", []), *r.get("mirror_ids", [])]:
             if await publisher.delete(client, mid):
                 ok = True
             await asyncio.sleep(0.3)

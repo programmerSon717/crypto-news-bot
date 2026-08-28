@@ -139,22 +139,43 @@ Actions 는 355회 실행됐지만 **전부 `cancelled`** 이었다. 매 실행�
 잭슨홀 연설(23:00 KST)이 그날 전체 스윕에 잡히지 않았다. 그래서 소스를 3곳으로 좁혀
 **5분 주기로 따로** 돈다. `python main.py --urgent`.
 
-| 소스 | 용도 |
-|---|---|
-| `kr.investing.com/rss/news_95.rss` (경제 지표 뉴스) | 나라별 지표 발표 |
-| `kr.investing.com/rss/news_14.rss` (경제 뉴스) | FOMC·연준 발언·거시 |
-| `federalreserve.gov/feeds/press_all.xml` | FOMC 성명·의장 연설 1차 출처 |
+경로가 둘이다. **판정 방식이 다르다.**
 
-- **제목만** 정규식으로 본다. 본문까지 보면 크립토 기사에 스치듯 언급된 것까지 걸린다.
-- 대상: CPI · PCE · PPI · 고용(비농업/실업률) · ISM PMI · GDP · FOMC · 잭슨홀
-- 걸리면 `force_category="Global Macro"` 로 지정 탭에 강제하고, 중요도 문턱을 적용하지 않는다.
+| 경로 | 소스 | 판정 |
+|---|---|---|
+| 지표 발표 | Trading Economics 스트림 API | `category` 필드 (구조화) |
+| 정책 이벤트 | investing.com 경제뉴스 RSS + 연준 보도자료 | 제목 정규식 |
+
+**① 지표 — `collectors/tradingeconomics.py`**
+`tradingeconomics.com/ws/stream.ashx` 가 `category`(Inflation Rate, Non Farm Payrolls,
+GDP Growth Rate …), `country`, `importance`, `date` 를 구조화해 준다.
+문자열 추측이 아니라 필드 값으로 판정하므로 훨씬 정확하다.
+
+- `size` 는 100 이하만 받는다(150 이상은 `Size is not valid`).
+- 지표 페이지 주소는 발표 때마다 같다 → `?i={ID}` 를 붙여 URL 중복제거에 걸리지 않게 한다.
+  **이걸 빼면 다음 달 같은 지표 발표가 통째로 막힌다.**
+- `TE_MIN_IMPORTANCE`(기본 1=전부). 실측 하루 약 53건이고 그중 다수가 중요도 1
+  (마카오 실업률·불가리아 PPI 등). 탭이 시끄러우면 2 로 올리면 하루 10건 안팎.
+
+**② 정책 이벤트 — 제목 정규식**
+- **제목만** 본다. 본문까지 보면 크립토 기사에 스치듯 언급된 것까지 걸린다.
+- 대상: CPI · PCE · PPI · 고용 · PMI · GDP · FOMC · 잭슨홀
 - 단순 단어 매칭으로는 샌다. 실제로 놓쳤던 것:
   `"연준 선호 인플레이션 지표…"`(PCE인데 PCE가 없음), `"체코 경제, 2분기 0.4% 성장"`(GDP인데 성장률이 아님).
   반대로 `인플레이션`만 넣으면 논평까지 다 걸리므로 발표를 뜻하는 말과 함께 있을 때만 잡는다.
 
-> **investing.com 경제 캘린더(페이지·AJAX)는 Cloudflare 403 이다.** RSS 만 쓸 수 있다.
-> 클라우드(데이터센터 IP)에서는 RSS 도 막힐 수 있다 — 업비트가 그런 사례다.
-> 막히면 `[rss:Investing …] fetch 실패` 로 로그에 남고, 연준 피드만으로 계속 돈다.
+**공통**
+- `force_category="Global Macro"` 로 강제하고 중요도 문턱을 적용하지 않는다.
+- **FOMC · 미국 거시 · 잭슨홀은 `mirror_to="이슈"`** 로 이슈 탭에도 한 부 더 올린다.
+  렌더된 본문을 재사용하므로 모델을 두 번 부르지 않는다.
+- `prompts.py` 에 예외 규칙이 있다 — 힌트가 `지표:`/`긴급:` 이면 크립토를 직접
+  언급하지 않아도 `relevant: true`. **이게 없으면 모델이 거시지표를 '크립토 무관'으로
+  버린다**(실측: 12건 중 6건 탈락).
+
+> **investing.com 경제 캘린더와 TE 의 RSS 는 Cloudflare 403 이다.**
+> investing 은 RSS 만, TE 는 스트림 API 만 쓸 수 있다.
+> 클라우드(데이터센터 IP)에서는 이마저 막힐 수 있다 — 업비트가 그런 사례다.
+> 막히면 로그에 `fetch 실패` 로 남고 나머지 경로로 계속 돈다.
 
 ---
 
@@ -347,6 +368,9 @@ GitHub 이 안 깨우면 그동안 봇이 통째로 멈추는 구조였다. 이�
 - **발행 임계값**: `.env`의 `MIN_IMPORTANCE` (기본 3)
 - **소스 추가**: `config.py`의 `rss_sources`에 `(이름, URL, 힌트)` 한 줄
 - **탭 추가**: `topics.py`의 `CATEGORIES` + `prompts.py` 분류 기준 → `setup_topics.py` 재실행
+- **두 탭에 동시 발행**: `NewsItem.mirror_to` 에 탭 이름을 넣으면 그 탭에도 한 부 더 간다.
+  `published.mirror_ids` 에 사본 message_id 를 남긴다. `--purge` 는 사본도 지우고,
+  `--resort` 는 사본을 건드리지 않는다(다른 탭에 있어야 하므로 옮기면 안 된다).
 - **메시지 레이아웃**: `publisher.py`의 `render()`
 - **하단 출처 표기**: `publisher.py`의 `_source_line()` + `source_label()`.
   내부 소스 이름에 섞인 수집 경로(`규제:미국(Bloomberg.com)`, `CoinPost(일본)`,
