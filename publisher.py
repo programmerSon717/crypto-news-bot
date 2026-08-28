@@ -67,7 +67,7 @@ def render(data: dict, url: str) -> str:
     """
     e = html.escape
     bullets = "\n".join(f"• {e(b)}" for b in data.get("bullets", []))
-    tags = " ".join(data.get("hashtags", []))
+    tags = " ".join(_clean_tags(data.get("hashtags", [])))
 
     def field(key: str, emoji: str) -> str:
         """값 앞에 이모지가 이미 붙어 오는 경우가 있어(스키마 설명을 따라함) 중복을 제거한다."""
@@ -134,6 +134,34 @@ _TAIL_PAREN = re.compile(r"\s*\((.+)\)\s*$")
 _TAIL_WORD = re.compile(r"\s+(규제|정책|크립토)$")
 _DROPPABLE = {"일본", "홍콩", "아시아", "싱가포르", "베트남", "중국", "한국",
               "미국", "영국", "UAE", "규제", "정책", "크립토"}
+
+
+def _clean_tags(tags: list) -> list:
+    """해시태그에서 내부 분류 키를 걸러낸다.
+
+    모델이 카테고리 값을 그대로 해시태그로 붙여 오는 경우가 있다(실제로 `#US_Rates`
+    가 발행됐다). 내부 식별자라 독자에게는 의미가 없고 형식도 어색하다.
+    """
+    import topics as _topics
+    # **여러 단어로 된 키만** 막는다. 'US Rates' → '#US_Rates' 처럼 기계가 만든 티가
+    # 나는 것들이다. 한 단어짜리(China·이슈·국내정책)는 해시태그로 써도 자연스러워
+    # 그대로 둔다 — 넓게 막으면 멀쩡한 태그까지 사라진다.
+    banned = set()
+    for key in _topics.CATEGORIES:
+        if " " not in key:
+            continue
+        banned |= {key.replace(" ", "").lower(), key.replace(" ", "_").lower()}
+    out = []
+    for t in tags:
+        t = (t or "").strip()
+        if not t:
+            continue
+        if not t.startswith("#"):
+            t = "#" + t
+        if t[1:].replace(" ", "").lower() in banned:
+            continue
+        out.append(t)
+    return out
 
 
 def source_label(raw: str) -> str:
