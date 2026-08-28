@@ -39,7 +39,7 @@ CATEGORIES = {
     "해외정책": ("🌎해외정책", 0xFFD67E),
     # 금리·증시는 정책과 시장 사이에 걸쳐 있어 '이슈'에 묻히기 쉬우므로 따로 뺀다.
     "Korea Rates": ("Korea Rates", 0x6FB9F0),
-    "US Rates": ("🇺🇸미국금리", 0xFB6F5F),
+    "US Rates": ("🇺🇸미국매크로", 0xFB6F5F),
     "Korea Equities": ("Korea Equities", 0x6FB9F0),
     "US Equities": ("US Equities", 0xFB6F5F),
     # 중국은 물량이 많아 따로 뺀다(인민은행·위안화·규제·상하이/항셍 전부).
