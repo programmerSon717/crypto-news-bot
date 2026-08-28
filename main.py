@@ -147,6 +147,28 @@ def is_stale(item: NewsItem) -> bool:
     return datetime.now(tz=KST).timestamp() - item.published_at > limit * 3600
 
 
+def summarize_priority(item: NewsItem) -> tuple:
+    """요약 대기열의 순번. 작을수록 먼저 처리한다.
+
+    1) 국가별 규제·정책이 맨 앞. 물량이 많은 일반 기사에 밀리면 국가 탭이
+       계속 비어 보인다. (기존 동작을 그대로 유지한다)
+    2) 그다음 일반 뉴스.
+    3) 리서치·분석은 맨 뒤. 시의성이 없어 몇 시간 늦어도 값이 안 떨어진다.
+
+    같은 단계 안에서는 **최신순**이다. 예전에는 오래된 것부터 처리했는데,
+    회당 상한이 7건으로 줄면서 5분 전 속보가 11시간 된 기사 뒤에 밀려
+    12시간 제한에 걸려 버려지는 일이 생긴다. 뉴스 채널에는 최신이 먼저다.
+    """
+    hint = item.region_hint or ""
+    if "리서치" in hint:
+        tier = 2
+    elif "/규제" in hint or "정책" in hint:
+        tier = 0
+    else:
+        tier = 1
+    return (tier, -(item.published_at or 0))
+
+
 def dedupe_items(items: list[NewsItem]) -> list[NewsItem]:
     """같은 중복제거 키를 가진 항목이 여러 수집기에서 들어오면 첫 번째만 남긴다.
 
@@ -260,9 +282,14 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
                if not store.is_seen(Store.make_key(i.source, i.unique_id))
                and not store.is_url_seen(i.url)
                and not is_stale(i)]
-    # 모델 호출 한도가 빡빡하므로 **국가별 규제·정책 기사를 먼저** 처리한다.
-    # 그러지 않으면 물량이 많은 일반 기사에 밀려 국가 탭이 계속 비어 있게 된다.
-    pending.sort(key=lambda i: 0 if "/규제" in (i.region_hint or "") else 1)
+    # ── 요약 순번(우선순위) ──
+    # 무료 한도가 빡빡해 한 번에 몇 건밖에 못 돌린다. 그래서 **이 순서가 곧
+    # 채널에 나가는 내용**이 된다. 발행 순서(과거→최신, RULES 1)와는 다른 얘기다.
+    # 여기서 정하는 건 '무엇을 요약할 것인가'이고, 발행 순서는 아래 루프가 따로 지킨다.
+    pending.sort(key=summarize_priority)
+    if pending:
+        head = pending[0]
+        print(f"[우선순위] {len(pending)}건 대기 — 선두: {head.title[:40]}")
     if budget:
         # 시간 상한이 걸린 실행(CI)에서는 어차피 처리 못 할 분량까지 요약하면 낭비다.
         # 병목은 발행이 아니라 요약이다. summarizer 의 전역 스로틀(RATE_LIMIT_RPM)이
