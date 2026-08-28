@@ -32,7 +32,7 @@ import publisher
 from publisher import publish
 from store import Store, normalize_url
 import summarizer
-from summarizer import summarize, summarize_insight
+from summarizer import summarize, summarize_briefing, summarize_insight
 
 store = Store(settings.db_path)
 
@@ -122,10 +122,6 @@ def annotate_origin(data: dict, item: NewsItem):
     - 채널 캡션에 원문 링크가 붙어 있으면 그게 가장 확실하므로 모델 판단보다 우선한다.
     - 실시간이 아닌 글이면 게시 시각을 표기하도록 표시를 남긴다.
     """
-    if item.deep:
-        # 최상위 정책 이벤트(FOMC·연준 연설)는 bullet 10~16개짜리 심층 요약으로.
-        from summarizer import summarize_briefing
-        return await summarize_briefing(item)
     if is_repost(item):
         # 렌더러가 수집처 링크를 출처로 쓰지 않게 하는 표시
         data["_repost"] = True
@@ -228,6 +224,9 @@ SKIPPED = object()
 
 async def _summarize_one(item: NewsItem) -> dict | None:
     """항목 1건을 알맞은 경로로 요약한다."""
+    if item.deep:
+        # 최상위 정책 이벤트(FOMC·연준 연설)는 bullet 10~16개짜리 심층 요약으로.
+        return await summarize_briefing(item)
     if is_repost(item):
         posted = (
             datetime.fromtimestamp(item.published_at, KST).strftime("%Y-%m-%d %H:%M")
