@@ -135,6 +135,54 @@ def poll_rhythm(commits):
             "last": marks[0]["when"] if marks else None}
 
 
+# ── 히스토리 저장소 ──
+# 별도 DB(Mongo 등)를 두지 않는다. 리포가 public 이라 여기 쌓으면
+#   · 누구나 웹에서 읽을 수 있고(Pages)
+#   · 나중에 이 저장소를 여는 사람도 자격증명 없이 그대로 읽는다.
+# 한 줄 = 한 시점. 오래된 것부터 잘라 파일이 무한정 커지지 않게 한다.
+DOCS = os.path.join(ROOT, "docs")
+HISTORY = os.path.join(DOCS, "history.jsonl")
+HISTORY_MAX = 3000          # 20분 간격이면 약 40일치
+
+
+def append_history(snap):
+    """상태판에 그릴 만한 값만 추려 한 줄 남긴다. 원본 전체를 쌓으면 금방 수십 MB 가 된다."""
+    db, runs = snap.get("db", {}), (snap.get("actions", {}).get("runs") or [])
+    live = next((r for r in runs if r["status"] == "in_progress"), None)
+    recent = (db.get("recent") or [{}])[0]
+    row = {
+        "at": snap["generated_at"],
+        "published": db.get("published"),
+        "seen": db.get("seen"),
+        "last_publish": recent.get("when"),
+        "last_headline": (recent.get("headline") or "")[:90],
+        "run": live["number"] if live else None,
+        "run_sha": live["sha"] if live else None,
+        "head": snap.get("git", {}).get("remote_head"),
+        "gap_median": _median(snap.get("rhythm", {}).get("gaps") or []),
+        "by_category": db.get("by_category") or {},
+    }
+    os.makedirs(DOCS, exist_ok=True)
+    lines = []
+    if os.path.exists(HISTORY):
+        with open(HISTORY, encoding="utf-8") as f:
+            lines = [ln for ln in f.read().splitlines() if ln.strip()]
+    # 같은 분(minute)에 두 번 돌면 덮어쓴다 — 중복 점이 그래프를 망친다
+    stamp = row["at"][:16]
+    lines = [ln for ln in lines if not ln.startswith(f'{{"at": "{stamp}')]
+    lines.append(json.dumps(row, ensure_ascii=False))
+    with open(HISTORY, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines[-HISTORY_MAX:]) + "\n")
+    return len(lines)
+
+
+def _median(xs):
+    if not xs:
+        return None
+    s = sorted(xs)
+    return s[len(s) // 2]
+
+
 def main():
     sys.path.insert(0, ROOT)
     snap = {
@@ -155,7 +203,15 @@ def main():
                     snap["tabs"][k]["thread"] = v
     except Exception as e:
         snap["tabs"] = {"_error": str(e)[:120]}
-    print(json.dumps(snap, ensure_ascii=False))
+    out = json.dumps(snap, ensure_ascii=False)
+    if "--write" in sys.argv:
+        os.makedirs(DOCS, exist_ok=True)
+        with open(os.path.join(DOCS, "status.json"), "w", encoding="utf-8") as f:
+            f.write(out)
+        n = append_history(snap)
+        print(f"docs/status.json 갱신 · 히스토리 {n}줄", file=sys.stderr)
+    else:
+        print(out)
 
 
 if __name__ == "__main__":

@@ -117,11 +117,11 @@ jobs:
           # 다음 실행이 같은 뉴스를 다시 발행하지 않는다.
           # 발행이 없으면 커밋하지 않는다(저장소가 불필요하게 불어나는 걸 막는다).
           save_state() {
-            if [[ -z "$(git status --porcelain botstate.sqlite3)" ]]; then
+            if [[ -z "$(git status --porcelain botstate.sqlite3 docs)" ]]; then
               echo "  [상태] 새 발행 없음 — 커밋 생략"
               return
             fi
-            git add botstate.sqlite3
+            git add botstate.sqlite3 docs
             git commit -q -m "chore: 발행 이력 갱신 [skip ci]"
             # rebase 가 중간에 멈추면 .git 이 rebase 상태로 남아 그 뒤 회차의 commit 이
             # 전부 실패한다. 5시간 반 동안 16회를 도는 루프라 반드시 원상복구해야 한다.
@@ -153,6 +153,9 @@ jobs:
               python main.py --digest || echo "  [경고] 다이제스트 실패"
             fi
 
+            # 공개 상태판(docs/)도 같이 갱신한다. Pages 가 이걸 서비스한다.
+            python admin/snapshot.py --write >/dev/null 2>&1 || echo "  [경고] 상태판 갱신 실패"
+            python admin/build_docs.py >/dev/null 2>&1 || true
             save_state
             echo "::endgroup::"
 
@@ -216,10 +219,10 @@ jobs:
         # 루프 중간에 취소·실패했을 때를 위한 안전망. 정상 종료면 보통 커밋할 게 없다.
         if: always()
         run: |
-          if [[ -n "$(git status --porcelain botstate.sqlite3)" ]]; then
+          if [[ -n "$(git status --porcelain botstate.sqlite3 docs)" ]]; then
             git config user.name  "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add botstate.sqlite3
+            git add botstate.sqlite3 docs
             git commit -m "chore: 발행 이력 갱신 [skip ci]"
             git pull --rebase --autostash || true
             git push
