@@ -87,8 +87,11 @@ jobs:
           # 더 길게 끌고 싶으면 낮춘다.
           RUN_BUDGET_SEC: ${{ vars.RUN_BUDGET_SEC || '120' }}
 
-          # 폴링 간격(초). 소스 61곳을 매번 긁으므로 너무 짧으면 상대 서버가 막는다.
+          # 전체 스윕 간격(초). 소스 60여 곳을 매번 긁으므로 너무 짧으면 상대가 막는다.
           POLL_INTERVAL_SEC: ${{ vars.POLL_INTERVAL_SEC || '1200' }}
+          # 긴급 레인 간격(초). 지표 발표·FOMC·잭슨홀은 늦으면 가치가 없어져
+          # 전체 스윕을 기다리지 않고 따로 짧게 돈다. 소스가 3곳뿐이라 부담이 적다.
+          URGENT_INTERVAL_SEC: ${{ vars.URGENT_INTERVAL_SEC || '300' }}
           # 루프 총 가동 시간(초). 5시간 30분 — job 타임아웃(350분) 앞에서 스스로 끝낸다.
           LOOP_SECONDS: ${{ vars.LOOP_SECONDS || '19800' }}
         run: |
@@ -145,10 +148,25 @@ jobs:
             # 대기 중이던 예약 실행이 곧바로 이어받아 다음 루프를 시작한다.
             NEXT=$(( $(date +%s) + POLL_INTERVAL_SEC ))
             if [[ $NEXT -ge $LOOP_END ]]; then
-              echo "루프 종료 — ${ROUND}회 폴링 완료. 다음 실행이 이어받는다."
+              echo "루프 종료 — 전체 스윕 ${ROUND}회 완료. 다음 실행이 이어받는다."
               break
             fi
-            sleep "$POLL_INTERVAL_SEC"
+
+            # 다음 전체 스윕까지 그냥 자지 않고, 그 사이를 긴급 레인으로 채운다.
+            # 지표 발표·FOMC·잭슨홀은 20분 늦으면 이미 가치가 없다.
+            WAITED=0
+            while [[ $WAITED -lt $POLL_INTERVAL_SEC ]]; do
+              SLEEP=$URGENT_INTERVAL_SEC
+              LEFT=$(( POLL_INTERVAL_SEC - WAITED ))
+              [[ $SLEEP -gt $LEFT ]] && SLEEP=$LEFT
+              sleep "$SLEEP"
+              WAITED=$(( WAITED + SLEEP ))
+              [[ $(date +%s) -ge $LOOP_END ]] && break
+              echo "::group::긴급 레인  ($(TZ=Asia/Seoul date '+%H:%M KST'))"
+              python main.py --urgent || echo "  [경고] 긴급 레인 실패 — 다음 회차로"
+              save_state
+              echo "::endgroup::"
+            done
           done
 
       - name: 다음 루프 예약 (자체 체인)

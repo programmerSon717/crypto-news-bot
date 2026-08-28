@@ -494,6 +494,17 @@ async def main():
             print(f"[warm] {len(items)}건 등록 완료. 이제 python main.py 로 실행하세요.")
             return
 
+        if "--urgent" in sys.argv:
+            # 긴급 레인: 지표 발표·FOMC·잭슨홀 등 늦으면 가치가 없어지는 건만
+            # 짧은 주기로 잡는다. 전체 스윕(--once)과 분리돼 있다.
+            import urgent
+            items = await urgent.collect(client)
+            if items:
+                for i in items:
+                    print(f"  · {i.title[:58]}  [{i.region_hint}]")
+            await process_items(client, items, warm=False, dry_run=dry_run)
+            return
+
         if once:
             # GitHub Actions 등 스케줄러에서 주기적으로 호출하는 모드: 1회 수집 후 종료
             items = await collect_all(client)

@@ -133,12 +133,36 @@ Actions 는 355회 실행됐지만 **전부 `cancelled`** 이었다. 매 실행�
 - 운영자의 러프한 사견 대신 **배경(📌) / 영향(📈) / 지켜볼 포인트(🔍)** 를 생성한다
 - 없는 수치·법령명·선례를 지어내지 못하도록 프롬프트에 금지 규칙을 명시했다
 
+### 5-1. 긴급 레인 (`urgent.py`)
+
+지표 발표·FOMC·잭슨홀은 **20분 늦으면 이미 가치가 없다.** 실제로 2026-08-28 워시 의장
+잭슨홀 연설(23:00 KST)이 그날 전체 스윕에 잡히지 않았다. 그래서 소스를 3곳으로 좁혀
+**5분 주기로 따로** 돈다. `python main.py --urgent`.
+
+| 소스 | 용도 |
+|---|---|
+| `kr.investing.com/rss/news_95.rss` (경제 지표 뉴스) | 나라별 지표 발표 |
+| `kr.investing.com/rss/news_14.rss` (경제 뉴스) | FOMC·연준 발언·거시 |
+| `federalreserve.gov/feeds/press_all.xml` | FOMC 성명·의장 연설 1차 출처 |
+
+- **제목만** 정규식으로 본다. 본문까지 보면 크립토 기사에 스치듯 언급된 것까지 걸린다.
+- 대상: CPI · PCE · PPI · 고용(비농업/실업률) · ISM PMI · GDP · FOMC · 잭슨홀
+- 걸리면 `force_category="Global Macro"` 로 지정 탭에 강제하고, 중요도 문턱을 적용하지 않는다.
+- 단순 단어 매칭으로는 샌다. 실제로 놓쳤던 것:
+  `"연준 선호 인플레이션 지표…"`(PCE인데 PCE가 없음), `"체코 경제, 2분기 0.4% 성장"`(GDP인데 성장률이 아님).
+  반대로 `인플레이션`만 넣으면 논평까지 다 걸리므로 발표를 뜻하는 말과 함께 있을 때만 잡는다.
+
+> **investing.com 경제 캘린더(페이지·AJAX)는 Cloudflare 403 이다.** RSS 만 쓸 수 있다.
+> 클라우드(데이터센터 IP)에서는 RSS 도 막힐 수 있다 — 업비트가 그런 사례다.
+> 막히면 `[rss:Investing …] fetch 실패` 로 로그에 남고, 연준 피드만으로 계속 돈다.
+
 ---
 
 ## 3. 파일 구조
 
 ```
 crypto-news-bot/
+├── urgent.py                   # 긴급 레인(지표·FOMC·잭슨홀) — 5분 주기
 ├── main.py                     # 진입점. 실행 모드 분기 + 카테고리 보정 + 시간 상한
 ├── config.py                   # .env 로딩, RSS 소스 목록
 ├── models.py                   # NewsItem (이미지 바이트 포함)
@@ -172,7 +196,8 @@ cd ~/<프로젝트 경로>/crypto-news-bot
 
 venv/bin/python main.py --warm                        # 기존 뉴스를 '본 것'으로 등록(발행X)
 venv/bin/python main.py                               # 상시 실행(맥 켜져 있어야 함)
-venv/bin/python main.py --once                        # 1회만 (스케줄러용)
+venv/bin/python main.py --once                        # 전체 스윕 1회
+venv/bin/python main.py --urgent                      # 긴급 레인만 1회(지표·FOMC·잭슨홀)
 venv/bin/python main.py --since 2026-08-16 --dry-run  # 뉴스 백필 대상만 확인
 venv/bin/python main.py --tg-since 2026-08-10         # 텔레그램 채널 백필(트위터 캡처)
 venv/bin/python setup_topics.py                       # 탭 생성(카테고리 추가 시 재실행)
@@ -188,7 +213,7 @@ venv/bin/python tg_login.py                           # 텔레그램 로그인 �
 **cron 은 폴링 주기가 아니라 '루프 재시작' 주기다.** job 안에서 스스로 반복 폴링한다.
 
 ```
-job 시작 → [수집·발행 → 이력 커밋 → 20분 대기] × 14회 → 5시간 30분 뒤 종료
+job 시작 → [전체 스윕 → 이력 커밋 → (긴급 레인 5분마다 ×4) ] × 14회 → 5시간 30분 뒤 종료
                                                       ↓
                                     스스로 다음 실행을 띄운다(workflow_dispatch)
                                                       ↓
@@ -230,6 +255,7 @@ GitHub 이 안 깨우면 그동안 봇이 통째로 멈추는 구조였다. 이�
 | `POLL_INTERVAL_SEC` | 1200 (20분) | 폴링 간격. 소스 61곳을 매번 긁으므로 너무 짧으면 상대가 막는다 |
 | `LOOP_SECONDS` | 19800 (5시간 30분) | 루프 가동 시간. job 상한 6시간 앞에서 스스로 끝낸다 |
 | cron | `9,39 * * * *` | 루프 재시작 주기. 둥근 시각은 예약이 몰려 더 밀리므로 비켜 잡았다 |
+| `URGENT_INTERVAL_SEC` | 300 (5분) | 긴급 레인 간격. 소스 3곳만 훑어 부담이 적다 |
 | `RUN_BUDGET_SEC` | 120 | 폴링 1회 시간 상한 = 1회 요약 상한(120×0.6÷5 = 14건) |
 
 **`RUN_BUDGET_SEC` 이 하루 분배를 정한다.** 진짜 상한은 Gemini 무료 일일 한도 560건이라,

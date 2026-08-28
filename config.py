@@ -90,6 +90,17 @@ class Settings:
         ("Vietnam Investment Review", "site:vir.com.vn crypto OR blockchain OR digital asset when:7d", "en-US", "US", "US:en", "베트남/규제"),
     ])
 
+    # 긴급 레인 전용 소스 — 짧은 주기로 따로 돌린다(urgent.py 참고).
+    # 여기 있는 것은 rss_sources 에 넣지 않는다. 넣으면 전체 스윕에서 또 훑게 된다.
+    # investing.com 은 경제지표 발표를 나라별로 가장 빨리 싣는다.
+    # (경제 캘린더 페이지·AJAX 는 Cloudflare 403 이라 RSS 만 쓸 수 있다)
+    urgent_sources: list = field(default_factory=lambda: [
+        ("Investing 경제지표", "https://kr.investing.com/rss/news_95.rss", "지표"),
+        ("Investing 경제뉴스", "https://kr.investing.com/rss/news_14.rss", "지표"),
+        # FOMC 성명·연준 의장 연설의 1차 출처. 매체보다 먼저 뜬다.
+        ("연준 보도자료", "https://www.federalreserve.gov/feeds/press_all.xml", "미국"),
+    ])
+
     # RSS 소스: (이름, URL, 기본 분류 힌트) — 2026-08 기준 수신 확인된 피드만 등록
     rss_sources: list = field(default_factory=lambda: [
         # ── 사용자가 지정한 국가별 매체 (2026-08-17 피드 수신 검증 완료) ──
