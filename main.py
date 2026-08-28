@@ -128,6 +128,9 @@ def annotate_origin(data: dict, item: NewsItem):
     if item.origin_url:
         data["origin_url"] = item.origin_url
 
+    # 발행 하단 '기사 원문' 옆에 매체명을 적기 위해 수집처를 넘긴다.
+    data["_source_name"] = item.source
+
     # 기사·문서의 발행 시각은 **항상** 표기한다(사용자 요청).
     # 실시간이든 백필이든 언제 나온 뉴스인지 알 수 있어야 한다.
     if item.published_at is None:

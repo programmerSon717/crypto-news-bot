@@ -114,6 +114,12 @@ Actions 는 355회 실행됐지만 **전부 `cancelled`** 이었다. 매 실행�
 - 나라별 탭은 **그 나라 규제당국이 주체일 때만** 쓴다. 한국 기업이 미 SEC 제재를 받으면 `US Policy`.
 - `해외정책`은 6개국에 해당하지 않는 나머지(EU·영국·중국·국제기구)용 catch-all.
 - `이슈`는 정책이 아닌 전부(해킹·상장·시황·기업).
+- **탭 이름(표시명)과 분류 키는 다르다.** `topics.py` 의 `CATEGORIES` 는 `{분류키: (표시이름, 색)}`.
+  라우팅·분류는 **키로만** 하므로 표시 이름은 자유롭게 바꿔도 된다.
+  키를 바꾸면 `prompts.py` 분류 기준·`country.py`·`main.normalize_category` 가 전부 어긋난다.
+  2026-08-28 에 표시 이름만 국기 이모지 형태로 바꿨다(🇰🇷한국정책 · 🌎해외정책 · 🚨주요이슈 등).
+- **이미 만들어진 탭은 `topics.py` 를 고쳐도 이름이 안 바뀐다.**
+  텔레그램 `editForumTopic` 을 따로 호출해야 한다(`message_thread_id` + `name`).
 - 탭을 추가할 땐 `topics.py`의 `CATEGORIES`와 `prompts.py`의 분류 기준을 **함께** 고쳐야 한다.
 - 모델이 표기를 흔들어도(`US policy`, `미국정책`) `main.normalize_category()`가 보정한다.
 
@@ -316,6 +322,10 @@ GitHub 이 안 깨우면 그동안 봇이 통째로 멈추는 구조였다. 이�
 - **소스 추가**: `config.py`의 `rss_sources`에 `(이름, URL, 힌트)` 한 줄
 - **탭 추가**: `topics.py`의 `CATEGORIES` + `prompts.py` 분류 기준 → `setup_topics.py` 재실행
 - **메시지 레이아웃**: `publisher.py`의 `render()`
+- **하단 출처 표기**: `publisher.py`의 `_source_line()` + `source_label()`.
+  내부 소스 이름에 섞인 수집 경로(`규제:미국(Bloomberg.com)`, `CoinPost(일본)`,
+  `CryptoSlate 규제`)를 떼고 매체명만 보여준다. 수집처는 `main.annotate_origin()` 이
+  `data["_source_name"]` 으로 넘긴다.
 
 ---
 

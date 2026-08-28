@@ -1,6 +1,7 @@
 """Telegram Bot API로 채널에 발행. HTML parse mode + blockquote로 스크린샷 포맷 재현."""
 import asyncio
 import html
+import re
 
 import httpx
 
@@ -120,6 +121,39 @@ def render(data: dict, url: str) -> str:
     return "\n".join(parts)
 
 
+# 내부 소스 이름에는 수집 경로가 섞여 있다.
+#   "규제:미국(Bloomberg.com)"  ← 구글뉴스 규제 검색으로 들어온 것
+#   "CoinPost(일본)" "SCMP(홍콩)"  ← 지역 표시
+#   "CryptoSlate 규제" "로이터(크립토)"  ← 같은 매체의 어느 피드인지
+# 독자에게는 매체 이름만 보이는 게 맞으므로 이런 꼬리표를 떼어낸다.
+_GNEWS = re.compile(r"^규제:[^(]*\((.+)\)$")
+_TAIL_PAREN = re.compile(r"\s*\((.+)\)\s*$")
+_TAIL_WORD = re.compile(r"\s+(규제|정책|크립토)$")
+_DROPPABLE = {"일본", "홍콩", "아시아", "싱가포르", "베트남", "중국", "한국",
+              "미국", "영국", "UAE", "규제", "정책", "크립토"}
+
+
+def source_label(raw: str) -> str:
+    """수집처 내부 이름 → 독자에게 보여줄 매체명."""
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    m = _GNEWS.match(s)          # 규제:미국(Bloomberg.com) → Bloomberg.com
+    if m:
+        s = m.group(1).strip()
+    m = _TAIL_PAREN.search(s)
+    if m:
+        inner = m.group(1).strip()
+        head = s[:m.start()].strip()
+        # 지역·피드 종류 표시이거나, 앞부분을 되풀이한 것(도메인 형태 포함)이면 버린다
+        norm_head = head.replace(" ", "").lower()
+        norm_inner = re.sub(r"\.(com|net|org|kr|jp|co\.kr|news|pro|io|info)$", "",
+                            inner.replace(" ", "").lower())
+        if inner in _DROPPABLE or norm_inner == norm_head:
+            s = head
+    return _TAIL_WORD.sub("", s).strip()
+
+
 def origin_of(data: dict) -> tuple[str, str]:
     """(표시 이름, 주소). 주소를 모르면 주소는 빈 문자열."""
     origin_url = (data.get("origin_url") or "").strip()
@@ -143,7 +177,9 @@ def _source_line(data: dict, url: str) -> str:
     e = html.escape
     # 퍼온 글이 아니면 수집처가 곧 원문이다(RSS 기사 등).
     if not (data.get("_repost") or data.get("_insight")):
-        return f'<a href="{e(url)}">기사 원문</a>'
+        link = f'<a href="{e(url)}">기사 원문</a>'
+        media = source_label(data.get("_source_name", ""))
+        return f"{link} - {e(media)}" if media else link
 
     label, origin_url = origin_of(data)
     if origin_url:
