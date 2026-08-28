@@ -11,7 +11,7 @@ import re
 
 import httpx
 
-from collectors import rss, tradingeconomics
+from collectors import rss, te_calendar, tradingeconomics
 from config import settings
 from models import NewsItem
 
@@ -76,7 +76,16 @@ async def collect(client: httpx.AsyncClient) -> list[NewsItem]:
     """
     hits: list[NewsItem] = []
 
-    # ── 1. 지표 발표 (구조화된 판정) ──
+    # ── 1. 지표 발표 '숫자' (캘린더) ──
+    # 기사보다 빠르다. 발표 즉시 실제/예상/직전 값이 채워지므로 그대로 전한다.
+    # 발표 직후 창(기본 45분)을 벗어난 과거 이벤트는 아예 내보내지 않는다.
+    for it in await te_calendar.fetch(client):
+        it.force_category = TARGET_TAB
+        if should_mirror("지표", it.title, it.region_hint):
+            it.mirror_to = MIRROR_TAB
+        hits.append(it)
+
+    # ── 2. 지표 발표 '기사' (구조화된 판정) ──
     for it in await tradingeconomics.fetch(client):
         label = it.region_hint.split("/")[0].removeprefix("지표:") or "지표"
         it.force_category = TARGET_TAB
@@ -84,7 +93,7 @@ async def collect(client: httpx.AsyncClient) -> list[NewsItem]:
             it.mirror_to = MIRROR_TAB
         hits.append(it)
 
-    # ── 2. 정책 이벤트 (제목 판정) ──
+    # ── 3. 정책 이벤트 (제목 판정) ──
     rss_items = await rss.fetch_all(client, settings.urgent_sources)
     for it in rss_items:
         label = urgency_of(it.title)
