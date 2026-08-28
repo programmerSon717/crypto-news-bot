@@ -110,6 +110,9 @@ def render(data: dict, url: str) -> str:
         if val:
             parts += ["", f"{emoji} <b>{label}</b>", e(val)]
 
+    # 모델이 코멘트 앞에 🐧 를 직접 붙여 오는 경우가 있어(스키마 설명을 따라 하다가)
+    # 그대로 두면 "🐧 🐧 ..." 이 된다. 아래 배경/영향 필드와 같은 방식으로 정리한다.
+    comment = comment.removeprefix("🐧").strip()
     parts += ["", f"🐧 {e(comment)}", ""]
 
     # 실시간이 아닌 글(백필 등)은 언제 올라온 글인지 밝혀준다.

@@ -44,14 +44,20 @@ def should_mirror(label: str, title: str, region_hint: str) -> bool:
 # 반대로 '인플레이션'만 넣으면 논평 기사까지 다 걸리므로, 발표를 뜻하는 말
 # (상승·둔화·지표·기록 등)과 함께 있을 때만 잡는다.
 KEYWORDS: dict[str, str] = {
-    "CPI":   r"소비자\s?물가|\bcpi\b|인플레이션.{0,25}(상승|하락|둔화|가속|지표|기록|예상|%)",
+    "CPI":   r"소비자\s?물가|\bcpi\b|인플레이션.{0,25}(상승|하락|둔화|가속|지표|기록|예상|%)|기조적\s?인플레",
     "PCE":   r"\bpce\b|개인\s?소비\s?지출",
     "PPI":   r"생산자\s?물가|\bppi\b",
-    "고용":   r"비농업|고용\s?(지표|보고서|동향)|실업률|실업수당|nonfarm|non-farm|unemployment|payroll",
+    "고용":   r"비농업|고용\s?(지표|보고서|동향|시장)|노동\s?시장|실업률|실업수당|nonfarm|non-farm|unemployment|payroll",
     "PMI":   r"\bism\b|\bpmi\b|구매관리자",
     "GDP":   r"\bgdp\b|국내총생산|성장률|\d\s?분기[^,]{0,30}성장",
-    "FOMC":  r"\bfomc\b|연방공개시장위원회|금리\s?(결정|인상|인하|동결)|기준금리",
+    "FOMC":  r"\bfomc\b|연방공개시장위원회|금리\s?(결정|인상|인하|동결|경로)|기준금리|점도표|매파|비둘기파|긴축|완화\s?기조|양적\s?긴축|\bqt\b|\bqe\b",
+    "유동성": r"신용\s?스프레드|대출\s?(기준|태도)|자금\s?조달|기업\s?자금|금융\s?여건|유동성",
     "잭슨홀": r"잭슨홀|jackson\s?hole",
+    # 트럼프 발언은 크립토·거시 양쪽에 즉각 반영된다. 다만 관세·이민 같은
+    # 무관한 트럼프 기사까지 다 걸면 탭이 도배되므로 **주제어와 함께** 있을 때만 잡는다.
+    "트럼프": r"(트럼프|trump).{0,40}(암호화폐|가상자산|크립토|비트코인|블록체인|스테이블코인|crypto|bitcoin|"
+             r"연준|\bfed\b|금리|인플레이션|관세.{0,10}물가|고용|실업|증시|달러)|"
+             r"(암호화폐|가상자산|크립토|비트코인|블록체인|연준|금리|인플레이션).{0,40}(트럼프|trump)",
 }
 _COMPILED = {k: re.compile(v, re.I) for k, v in KEYWORDS.items()}
 
@@ -99,6 +105,7 @@ async def collect(client: httpx.AsyncClient) -> list[NewsItem]:
     for it in await fed_speech.fetch(client):
         it.force_category = TARGET_TAB
         it.mirror_to = MIRROR_TAB      # 연준 의장 발언은 언제나 이슈 탭에도
+        it.deep = True                 # bullet 10~16개짜리 심층 요약
         hits.append(it)
 
     # ── 4. 정책 이벤트 (제목 판정) ──
@@ -111,6 +118,9 @@ async def collect(client: httpx.AsyncClient) -> list[NewsItem]:
         it.region_hint = f"{it.region_hint}/긴급:{label}".lstrip("/")
         if should_mirror(label, it.title, it.region_hint):
             it.mirror_to = MIRROR_TAB
+        # FOMC 성명·잭슨홀은 시장이 문장 하나까지 뜯어본다 → 심층 요약
+        if label in ("FOMC", "잭슨홀"):
+            it.deep = True
         hits.append(it)
 
     mirrored = sum(1 for i in hits if i.mirror_to)

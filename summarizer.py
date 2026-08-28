@@ -16,6 +16,7 @@ from google.genai import types
 from config import settings
 from models import NewsItem
 from prompts import (
+    BRIEFING_SYSTEM_PROMPT,
     INSIGHT_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
     build_insight_prompt,
@@ -269,6 +270,65 @@ async def summarize_insight(item: NewsItem, posted_at: str) -> dict | None:
                 break
 
     print(f"[insight] 실패 ({item.url}): {last_err}")
+    return None
+
+
+# 심층 요약용. bullet 이 10~16개라 출력 토큰을 넉넉히 준다.
+# 사실 왜곡을 줄이려 temperature 를 낮춘다.
+_briefing_config = types.GenerateContentConfig(
+    system_instruction=BRIEFING_SYSTEM_PROMPT,
+    response_mime_type="application/json",
+    temperature=0.3,
+    max_output_tokens=4000,
+)
+
+
+def _generate_briefing_sync(model: str, user_prompt: str) -> str:
+    resp = client.models.generate_content(
+        model=model, contents=user_prompt, config=_briefing_config
+    )
+    return resp.text or ""
+
+
+async def summarize_briefing(item: NewsItem) -> dict | None:
+    """FOMC·연준 연설처럼 최상위 정책 이벤트를 촘촘하게 요약한다.
+
+    일반 경로(summarize)와 프롬프트·출력 길이만 다르고 나머지는 같다.
+    """
+    user_prompt = build_user_prompt(
+        item.source, item.title, item.url, item.body, item.region_hint
+    )
+    models = _usable(_candidates())
+    if not models:
+        return None
+    last_err = None
+    for model in models:
+        for attempt in range(3):
+            try:
+                await _throttle()
+                text = await asyncio.wait_for(
+                    asyncio.to_thread(_generate_briefing_sync, model, user_prompt),
+                    CALL_TIMEOUT,
+                )
+                data = _extract_json(text)
+                if not data.get("relevant"):
+                    return None
+                return data
+            except Exception as e:
+                last_err = e
+                msg = str(e)
+                if _is_quota_exhausted(msg):
+                    if model not in _exhausted:
+                        _exhausted.add(model)
+                        print(f"[모델] {model} 일일 한도 소진 — 이번 실행에서 제외")
+                    break
+                if _retryable(e, msg):
+                    delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \
+                        else 2 * (attempt + 1)
+                    await asyncio.sleep(delay)
+                    continue
+                break
+    print(f"[briefing] 실패 ({item.title[:40]}): {last_err}")
     return None
 
 

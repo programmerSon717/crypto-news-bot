@@ -21,6 +21,9 @@ class NewsItem:
     # (예: 블록미디어 리서치는 키워드로 걸러 무조건 '이슈' 탭)
     force_category: str = ""
 
+    # FOMC·연준 연설처럼 촘촘한 요약이 필요한 건. summarize_briefing 경로로 보낸다.
+    deep: bool = False
+
     # 지정 탭 외에 **한 부 더** 보낼 탭. FOMC·미국 거시·잭슨홀은 Global Macro 에
     # 넣으면서 이슈 탭에도 올린다(사용자 지시). 빈 값이면 미러하지 않는다.
     mirror_to: str = ""
