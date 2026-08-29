@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
-from collectors import (binance, upbit, rss, telegram_channels, tg_web,
+from collectors import (binance, bithumb, upbit, rss, telegram_channels, tg_web,
                         blockmedia_archive, blockmedia_research, coin68,
                         regulation)
 import country
@@ -94,6 +94,9 @@ def normalize_category(cat: str | None) -> str:
         "korea equity": "Korea Equities", "us equity": "US Equities",
         "global macro": "Global Macro", "글로벌거시": "Global Macro",
         "중국": "China", "china": "China", "china policy": "China",
+        # 모델이 띄어쓰기를 넣거나 영어로 쓰는 일이 있다
+        "거래소 이슈": "거래소이슈", "거래소": "거래소이슈",
+        "exchange": "거래소이슈", "exchange issue": "거래소이슈",
     }
     if lowered in aliases:
         return aliases[lowered]
@@ -393,9 +396,13 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
             covered += 1
             print(f"[skip] 이미 발행된 내용: {item.title[:56]}")
             continue
-        # 탭이 지정된 소스(블록미디어 리서치 등)는 사용자가 직접 고른 것이므로
-        # 중요도 문턱을 적용하지 않는다. 적용하면 분석·리서치 글이 거의 다 잘린다.
-        if (not item.force_category
+        # 중요도 문턱을 적용하지 않는 경우:
+        #  - 탭이 지정된 소스(리서치·지표): 사용자가 직접 고른 것이다
+        #  - 거래소이슈: 입출금 중단·유의종목 같은 공지는 모델이 2~3점을 준다.
+        #    문턱을 걸면 탭이 통째로 비어버린다. 이 탭은 '굵직한 뉴스'가 아니라
+        #    '거래소에서 일어난 일'을 모으는 곳이라 기준이 다르다.
+        exempt = item.force_category or normalize_category(data.get("category")) == "거래소이슈"
+        if (not exempt
                 and data.get("importance", 0) < settings.min_importance):
             print(f"[skip] 중요도 {data.get('importance')}: {item.title[:60]}")
             continue
@@ -481,6 +488,7 @@ async def collect_all(client: httpx.AsyncClient) -> list[NewsItem]:
     items: list[NewsItem] = []
     items += await binance.fetch(client)
     items += await upbit.fetch(client)
+    items += await bithumb.fetch(client)   # 업비트가 클라우드에서 막혀 국내는 여기로 메운다
     # 리서치를 일반 RSS 보다 **먼저** 넣는다. 같은 글이 양쪽에 걸리면
     # dedupe_items() 가 먼저 온 쪽을 남기므로, 이래야 이슈 탭 강제가 유지된다.
     items += await blockmedia_research.fetch(client)

@@ -16,7 +16,7 @@ SYSTEM_PROMPT = """당신은 크립토/블록체인 뉴스를 큐레이션하는
   "relevant": true/false,        // 크립토/블록체인/디지털자산 규제와 무관하면 false
   "importance": 1~5,             // 5=시장 전체 영향(대형 규제, 대형 해킹), 3=업계 주목, 1=사소한 공지
   "region": "국내" | "해외",
-  "category": "국내정책" | "US Policy" | "Japan Policy" | "Hong Kong Policy" | "Singapore Policy" | "UAE Policy" | "Vietnam Policy" | "해외정책" | "Korea Rates" | "US Rates" | "Korea Equities" | "US Equities" | "China" | "Global Macro" | "이슈",   // 아래 "카테고리 분류 기준" 참고. 이 15개 중 하나 필수, 표기 그대로.
+  "category": "국내정책" | "US Policy" | "Japan Policy" | "Hong Kong Policy" | "Singapore Policy" | "UAE Policy" | "Vietnam Policy" | "해외정책" | "Korea Rates" | "US Rates" | "Korea Equities" | "US Equities" | "China" | "Global Macro" | "거래소이슈" | "이슈",   // 아래 "카테고리 분류 기준" 참고. 이 15개 중 하나 필수, 표기 그대로.
   "headline": "이모지 없이 한 줄 헤드라인",
   "header_emoji": "헤드라인 앞에 붙일 이모지 1개 (규제=📕, 거래소=🏦 또는 거래소 로고 대신 ◈, 해킹=🚨, 토큰=🪙 등 상황에 맞게)",
   "lede": "☑️ 뒤에 붙는 1~2문장 상황 요약",
@@ -40,6 +40,13 @@ SYSTEM_PROMPT = """당신은 크립토/블록체인 뉴스를 큐레이션하는
 - **Korea Equities**: 한국 증시. 코스피·코스닥 지수, 사이드카·서킷브레이커, 국내 상장사 주가·실적(삼성전자·SK하이닉스 등), 외국인·기관 수급, 공매도 제도.
 - **US Equities**: 미국 증시. S&P500·나스닥·다우, 미국 상장사 주가·실적, 미국 ETF·토큰화 주식, 서학개미 관련.
 - **China**: 중국 관련 전부 — 인민은행(PBOC)·위안화, 중국 규제·CBDC(디지털 위안), 상하이·항셍 지수, 중국 경제지표(소매판매·산업생산·PMI).
+- **거래소이슈**: 거래소가 주체이거나 거래소에서 벌어진 일 전부.
+  상장·거래지원 종료(상폐)·유의종목 지정·입출금 중단·재개·마켓 추가·
+  수수료 정책·이벤트·시스템 점검·접속 장애·거래소 해킹과 자산 유출·
+  거래소를 겨냥한 규제 조치와 제재.
+  **업비트·빗썸·바이낸스 등 거래소 공지는 전부 여기다.**
+  다만 규제당국이 주체이고 거래소가 대상일 뿐이면 그 나라 정책 탭이 우선한다
+  (예: 홍콩 증감회가 무면허 업체를 지정 → Hong Kong Policy).
 - **Global Macro**: **미국·한국·중국이 아닌** 나라의 거시지표·통화정책·증시.
   **미국 얘기가 들어가면 안 된다.** 연준·FOMC·미 지표는 전부 `US Rates` 다.
   한국 얘기도 안 된다 — `Korea Rates`/`Korea Equities` 로 보낸다.
@@ -207,7 +214,7 @@ JSON 외 텍스트나 마크다운 백틱을 절대 포함하지 마세요.
 {
   "relevant": true/false,        // 크립토/블록체인/디지털자산과 무관하면 false
   "importance": 1~5,             // 5=시장 전체 영향, 3=업계 주목, 1=잡담·홍보
-  "category": "국내정책" | "US Policy" | "Japan Policy" | "Hong Kong Policy" | "Singapore Policy" | "UAE Policy" | "Vietnam Policy" | "해외정책" | "Korea Rates" | "US Rates" | "Korea Equities" | "US Equities" | "China" | "Global Macro" | "이슈",
+  "category": "국내정책" | "US Policy" | "Japan Policy" | "Hong Kong Policy" | "Singapore Policy" | "UAE Policy" | "Vietnam Policy" | "해외정책" | "Korea Rates" | "US Rates" | "Korea Equities" | "US Equities" | "China" | "Global Macro" | "거래소이슈" | "이슈",
   "headline": "이모지 없이 한 줄 헤드라인",
   "header_emoji": "헤드라인 앞 이모지 1개 (규제=📕, 거래소=🏦, 해킹=🚨, 토큰=🪙, 자금흐름=💸 등)",
   "lede": "☑️ 뒤에 붙는 1~2문장 사실 요약. 트윗 주체와 핵심 행위를 명시.",
@@ -337,7 +344,7 @@ JSON으로만 응답하세요. JSON 외 텍스트나 마크다운 백틱을 절�
 ## 카테고리
 "국내정책" | "US Policy" | "Japan Policy" | "Hong Kong Policy" | "Singapore Policy" |
 "UAE Policy" | "Vietnam Policy" | "해외정책" | "Korea Rates" | "US Rates" |
-"Korea Equities" | "US Equities" | "이슈"
+"Korea Equities" | "US Equities" | "거래소이슈" | "이슈"
 
 ## 판정 순서
 1) **금리·증시가 최우선.** 암호화폐 얘기가 섞여 있어도 본질이 금리·증시면 여기로.
@@ -352,7 +359,8 @@ JSON으로만 응답하세요. JSON 외 텍스트나 마크다운 백틱을 절�
    나라가 겹칠 때: 그 뉴스의 **주된 시장** 기준.
 2) 금리·증시가 아니고 규제당국이 주체면 → 해당 국가 정책 탭
 3) 나머지는 → 이슈
-   주의: 현물 ETF 자금 유입, 토큰화 주식 상장, 암호화폐 거래소 상장·해킹은 **이슈**다.
+   주의: 현물 ETF 자금 유입·토큰화 주식 상장은 **이슈**다.
+   암호화폐 **거래소** 상장·해킹·공지는 **거래소이슈**로 보낸다.
    증시 탭은 실제 주식시장 뉴스에만 쓴다.
 
 ## 중요
