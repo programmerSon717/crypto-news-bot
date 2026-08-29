@@ -17,13 +17,15 @@ ROOT = os.path.dirname(HERE)
 DOCS = os.path.join(ROOT, "docs")
 
 # 문서를 '역할'로 가른다. 파일 순서가 아니라 **찾는 목적** 순서다.
+# 값은 HANDOFF.md 의 절 번호다. 하위 절(5-1 등)도 앞자리로 같은 역할에 묶인다.
 ROLES = [
-    ("지금 상태",   "무슨 일이 있었고 지금 어떤 상태인가",       ["## 0.", "## 2. 현재 상태"]),
-    ("운영",       "어떻게 돌고 있나 · 멈췄을 때 뭘 보나",      ["## 5. 클라우드 운영", "## 4. 실행 방법"]),
-    ("절대 규칙",   "고치기 전에 반드시 읽을 것",                ["RULES"]),
-    ("구조",       "무엇이 어디에 있나",                       ["## 3. 파일 구조", "## 1. 이 프로젝트"]),
-    ("판단 근거",   "왜 이렇게 했나 · 되돌리지 말 것",          ["## 6. 중요한 의사결정", "## 7. 함정"]),
-    ("손보는 곳",   "톤·소스·탭을 바꾸려면",                    ["## 8. 커스터마이징", "## 9. 검증된 RSS"]),
+    ("지금 상태",   "무슨 일이 있었고 지금 어떤 상태인가",       {"0", "2"}),
+    ("남은 일",     "다음 세션이 이어서 할 것 · 승인 대기",      {"10"}),
+    ("절대 규칙",   "고치기 전에 반드시 읽을 것",                "RULES"),
+    ("운영",       "어떻게 돌고 있나 · 멈췄을 때 뭘 보나",      {"4", "5", "9"}),
+    ("구조",       "무엇이 어디에 있나",                       {"1", "3"}),
+    ("판단 근거",   "왜 이렇게 했나 · 되돌리지 말 것",          {"6", "7", "8"}),
+    ("손보는 곳",   "톤·소스·탭을 바꾸려면",                    {"11", "12"}),
 ]
 
 
@@ -46,13 +48,20 @@ def split_sections(md: str, source: str) -> list[dict]:
 
 
 def assign_role(sec: dict) -> str:
-    key = f'{"RULES" if sec["source"] == "RULES.md" else ""}## {sec["title"]}'
-    for role, _, prefixes in ROLES:
-        for p in prefixes:
-            if p == "RULES" and sec["source"] == "RULES.md":
-                return role
-            if key.startswith(p) or sec["title"].startswith(p.removeprefix("## ")):
-                return role
+    """절 번호로 역할을 정한다.
+
+    제목 문자열로 맞추면 절 이름을 조금만 손봐도 분류가 조용히 깨진다.
+    번호는 잘 안 바뀌고, 하위 절(`5-1. 긴급 레인`)도 앞자리로 부모와 같이 묶인다.
+    """
+    if sec["source"] == "RULES.md":
+        return "절대 규칙"
+    m = re.match(r"(\d+)", sec["title"])
+    if not m:
+        return "그 밖에"
+    num = m.group(1)
+    for role, _, nums in ROLES:
+        if nums != "RULES" and num in nums:
+            return role
     return "그 밖에"
 
 
@@ -62,9 +71,16 @@ def build_handoff() -> dict:
         path = os.path.join(ROOT, name)
         if os.path.exists(path):
             secs += split_sections(open(path, encoding="utf-8").read(), name)
-    grouped = {}
+    # 번호 없는 하위 절(`### 발행 포맷` 등)은 바로 위 절의 역할을 물려받는다.
+    # 안 그러면 본문의 알맹이가 전부 '그 밖에'로 새어 목차가 쓸모없어진다.
+    grouped, carried = {}, "그 밖에"
     for s in secs:
-        grouped.setdefault(assign_role(s), []).append(
+        role = assign_role(s)
+        if role == "그 밖에" and s["level"] > 2:
+            role = carried
+        else:
+            carried = role
+        grouped.setdefault(role, []).append(
             {"title": s["title"], "body": s["body"], "source": s["source"]})
     order = [r[0] for r in ROLES] + ["그 밖에"]
     return {
