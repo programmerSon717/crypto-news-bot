@@ -314,21 +314,34 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
             pending = pending[:cap]
 
     summaries: dict[str, dict | None] = {}
+    # 발행 단계의 마감시각. 요약이 끝난 뒤 다시 세팅된다(아래 참고).
+    publish_until = (started + budget) if budget else None
     if pending and not warm:
         print(f"[요약] {len(pending)}건 병렬 처리 시작 (동시 {SUMMARY_CONCURRENCY})")
         deadline = (started + budget * SUMMARIZE_BUDGET_RATIO) if budget else None
         # 이미 발행한 글 목록. 모델이 "이거 이미 나갔다"를 판정하는 근거다.
         recent = store.recent_for_dedup(hours=12, limit=10)
+        t0 = time.monotonic()
         results = await _summarize_ahead(pending, deadline, recent)
+        took = time.monotonic() - t0
         # 손대지 않은 항목은 아예 담지 않는다 → 아래에서 '다음 실행으로' 처리된다.
         summaries = {Store.make_key(i.source, i.unique_id): d
                      for i, d in zip(pending, results) if d is not SKIPPED}
-        print(f"[요약] 완료 — 유효 {sum(1 for d in results if d and d is not SKIPPED)}건")
+        print(f"[요약] 완료 — 유효 {sum(1 for d in results if d and d is not SKIPPED)}건"
+              f" ({took:.0f}초)")
+        # 요약이 예산을 넘겨 끝나는 일이 잦다 — 모델이 쉬는 동안 진행 중인 호출이 남는다.
+        # 그때 발행 루프가 곧바로 시간 초과가 되면 **요약에 쓴 한도가 통째로 버려진다.**
+        # (실측: 유효 18건을 만들어놓고 발행 0건.) 그래서 발행에는 별도 시계를 준다.
+        if budget:
+            publish_until = time.monotonic() + budget * (1 - SUMMARIZE_BUDGET_RATIO)
+            if took > budget:
+                print(f"[요약] 예산({budget}초) 초과 — 발행에 "
+                      f"{budget * (1 - SUMMARIZE_BUDGET_RATIO):.0f}초 따로 배정")
 
     for item in ordered:
         # 시간 상한을 넘으면 남은 항목은 손대지 않고 다음 실행으로 넘긴다.
         # '본 것으로 표시'를 하기 전에 끊어야 발행 없이 유실되는 항목이 생기지 않는다.
-        if budget and time.monotonic() - started > budget:
+        if publish_until and time.monotonic() > publish_until:
             deferred += 1
             continue
 
