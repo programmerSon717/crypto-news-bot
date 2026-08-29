@@ -115,6 +115,12 @@ def render(data: dict, url: str) -> str:
     comment = comment.removeprefix("🐧").strip()
     parts += ["", f"🐧 {e(comment)}", ""]
 
+    # 이미 나간 글과 겹치지만 새 내용이 있어 올리는 경우, 무엇이 새로운지 밝힌다.
+    # 독자가 "아까 본 것 같은데" 하고 넘기지 않도록.
+    note = (data.get("update_note") or "").strip().removeprefix("🔁").strip()
+    if note:
+        parts += ["", f"🔁 <b>업데이트</b>", e(note), ""]
+
     # 실시간이 아닌 글(백필 등)은 언제 올라온 글인지 밝혀준다.
     posted = data.get("_posted_label")
     if posted and not data.get("_headline_in_caption"):   # 캡션에 이미 넣었으면 생략

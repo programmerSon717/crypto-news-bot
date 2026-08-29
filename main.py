@@ -226,7 +226,7 @@ SUMMARIZE_BUDGET_RATIO = 0.6
 SKIPPED = object()
 
 
-async def _summarize_one(item: NewsItem) -> dict | None:
+async def _summarize_one(item: NewsItem, recent: list | None = None) -> dict | None:
     """항목 1건을 알맞은 경로로 요약한다."""
     if item.deep:
         # 최상위 정책 이벤트(FOMC·연준 연설)는 bullet 10~16개짜리 심층 요약으로.
@@ -237,11 +237,12 @@ async def _summarize_one(item: NewsItem) -> dict | None:
             if item.published_at else "불명"
         )
         return await summarize_insight(item, posted)
-    return await summarize(item)
+    return await summarize(item, recent)
 
 
 async def _summarize_ahead(items: list[NewsItem],
-                           deadline: float | None = None) -> list:
+                           deadline: float | None = None,
+                           recent: list | None = None) -> list:
     """요약을 미리 병렬로 돌린다. 발행은 순서대로 해야 하므로 결과 순서는 유지한다.
 
     한 건씩 처리하면 건당 15~20초(이미지 읽기)가 그대로 쌓여 수십 건에 수십 분이 걸린다.
@@ -260,7 +261,7 @@ async def _summarize_ahead(items: list[NewsItem],
                 skipped += 1
                 return SKIPPED
             try:
-                return await _summarize_one(it)
+                return await _summarize_one(it, recent)
             except Exception as e:
                 print(f"[요약] 실패({it.title[:40]}): {e}")
                 return None
@@ -279,6 +280,7 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
     deferred = 0
     dup = 0
     dropped = 0
+    covered = 0
 
     ordered = publish_order(dedupe_items(items))
     stale = 0
@@ -315,7 +317,9 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
     if pending and not warm:
         print(f"[요약] {len(pending)}건 병렬 처리 시작 (동시 {SUMMARY_CONCURRENCY})")
         deadline = (started + budget * SUMMARIZE_BUDGET_RATIO) if budget else None
-        results = await _summarize_ahead(pending, deadline)
+        # 이미 발행한 글 목록. 모델이 "이거 이미 나갔다"를 판정하는 근거다.
+        recent = store.recent_for_dedup(hours=12, limit=10)
+        results = await _summarize_ahead(pending, deadline, recent)
         # 손대지 않은 항목은 아예 담지 않는다 → 아래에서 '다음 실행으로' 처리된다.
         summaries = {Store.make_key(i.source, i.unique_id): d
                      for i, d in zip(pending, results) if d is not SKIPPED}
@@ -370,6 +374,11 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         data = summaries[key] if key in summaries else await _summarize_one(item)
         if data is None:
             print(f"[skip] 무관/실패: {item.title[:60]}")
+            continue
+        if data.get("duplicate"):
+            # 이미 나간 글에 내용이 다 들어 있다. 발행하지 않는다.
+            covered += 1
+            print(f"[skip] 이미 발행된 내용: {item.title[:56]}")
             continue
         # 탭이 지정된 소스(블록미디어 리서치 등)는 사용자가 직접 고른 것이므로
         # 중요도 문턱을 적용하지 않는다. 적용하면 분석·리서치 글이 거의 다 잘린다.
@@ -440,6 +449,8 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         print(f"[집계] 다른 피드로 이미 처리한 같은 기사 {dup}건 제외")
     if dropped:
         print(f"[집계] 종합지에서 온 크립토 무관 기사 {dropped}건 제외 (요약 안 함)")
+    if covered:
+        print(f"[집계] 이미 발행한 글에 내용이 다 들어 있어 제외 {covered}건")
 
 
 async def recent_tg_web(client: httpx.AsyncClient, hours: int = 6) -> list[NewsItem]:

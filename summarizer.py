@@ -375,10 +375,14 @@ async def summarize_briefing(item: NewsItem) -> dict | None:
     return None
 
 
-async def summarize(item: NewsItem) -> dict | None:
-    """실패하거나 관련 없는 뉴스면 None 반환."""
+async def summarize(item: NewsItem, recent: list | None = None) -> dict | None:
+    """실패하거나 관련 없는 뉴스면 None 반환.
+
+    recent 는 이미 발행한 글 목록이다. 요약 호출에 얹어 보내 모델이 중복 여부까지
+    함께 판정하게 한다 — 따로 물어보면 한도를 두 배로 쓴다.
+    """
     user_prompt = build_user_prompt(
-        item.source, item.title, item.url, item.body, item.region_hint
+        item.source, item.title, item.url, item.body, item.region_hint, recent
     )
     models = _rotate(_usable(_candidates()))
     if not models:

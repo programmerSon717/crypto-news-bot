@@ -231,6 +231,33 @@ class Store:
             for r in rows
         ]
 
+    def recent_for_dedup(self, hours: int = 12, limit: int = 10) -> list[dict]:
+        """중복 판정에 쓸 최근 발행 목록.
+
+        모델에게 "이미 이런 게 나갔다"고 알려주려는 것이라 헤드라인과 한 줄 요약만
+        보낸다. 본문까지 실으면 토큰만 늘고 판정은 나아지지 않는다.
+        """
+        since = time.time() - hours * 3600
+        with self._conn() as c:
+            rows = c.execute(
+                """SELECT headline, lede, published_at, source_url
+                   FROM published WHERE published_at >= ?
+                   ORDER BY published_at DESC LIMIT ?""",
+                (since, limit),
+            ).fetchall()
+        out = []
+        for headline, lede, ts, url in rows:
+            host = ""
+            if url:
+                host = url.split("//")[-1].split("/")[0].replace("www.", "")
+            out.append({
+                "headline": headline or "",
+                "lede": lede or "",
+                "when": time.strftime("%m-%d %H:%M", time.localtime(ts)),
+                "source": host or "이전 발행",
+            })
+        return out
+
     def digest_done(self, scope: str, window_end: float) -> bool:
         with self._conn() as c:
             row = c.execute(
