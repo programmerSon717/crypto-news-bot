@@ -28,6 +28,7 @@ from collectors import (binance, upbit, rss, telegram_channels, tg_web,
 import country
 from config import settings
 from models import NewsItem
+import prefilter
 import publisher
 from publisher import publish
 from store import Store, normalize_url
@@ -274,6 +275,7 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
     started = time.monotonic()
     deferred = 0
     dup = 0
+    dropped = 0
 
     ordered = publish_order(dedupe_items(items))
     stale = 0
@@ -284,7 +286,8 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
     pending = [i for i in ordered
                if not store.is_seen(Store.make_key(i.source, i.unique_id))
                and not store.is_url_seen(i.url)
-               and not is_stale(i)]
+               and not is_stale(i)
+               and not prefilter.is_offtopic(i)]
     # ── 요약 순번(우선순위) ──
     # 무료 한도가 빡빡해 한 번에 몇 건밖에 못 돌린다. 그래서 **이 순서가 곧
     # 채널에 나가는 내용**이 된다. 발행 순서(과거→최신, RULES 1)와는 다른 얘기다.
@@ -337,7 +340,10 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         # 손대지 않는다. '본 것'으로 찍어버리면 발행되지 않은 채 영영 사라진다.
         # 오래된 기사는 해당 없다 — 그건 아래에서 기록하고 버리는 게 맞다.
         outdated = is_stale(item)
-        if budget and not warm and not outdated and key not in summaries:
+        # 종합지에서 온 크립토 무관 기사. 요약하지 않고 '본 것'으로만 기록한다
+        # (아래에서 mark_seen 되므로 다음 실행에 다시 잡히지 않는다).
+        offtopic = prefilter.is_offtopic(item)
+        if budget and not warm and not outdated and not offtopic and key not in summaries:
             deferred += 1
             continue
 
@@ -350,6 +356,9 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         # 오래된 기사는 발행하지 않는다(위에서 '본 것'으로 기록했으니 다시 잡히지 않는다).
         if outdated:
             stale += 1
+            continue
+        if offtopic:
+            dropped += 1
             continue
 
         # 미리 병렬로 돌려둔 결과를 쓴다. 없으면(단건 경로) 그 자리에서 처리.
@@ -424,6 +433,8 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         print(f"[집계] {settings.max_age_hours}시간 초과된 과거 기사 {stale}건 제외")
     if dup:
         print(f"[집계] 다른 피드로 이미 처리한 같은 기사 {dup}건 제외")
+    if dropped:
+        print(f"[집계] 종합지에서 온 크립토 무관 기사 {dropped}건 제외 (요약 안 함)")
 
 
 async def recent_tg_web(client: httpx.AsyncClient, hours: int = 6) -> list[NewsItem]:
