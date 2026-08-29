@@ -35,23 +35,37 @@ client = genai.Client(
 # 라이브러리 단 타임아웃이 안 먹는 경우를 대비한 상한(초).
 CALL_TIMEOUT = 120
 
-# 무료 티어는 모델당 분당 15건이다. 넘기면 429 로 실패하고 그 항목은 유실된다.
-# 여유를 두고 12건/분으로 스스로 제한한다.
-RATE_LIMIT_RPM = 12
+# 분당 한도는 **모델별**이다. 실측(2026-08-29):
+#   quotaId = GenerateRequestsPerMinutePerProjectPerModel-FreeTier, quotaValue = 15
+# 그래서 스로틀도 모델별로 건다. 예전에는 전역 하나였는데, 모델이 7개로 늘어난 뒤로는
+# 그게 병목이 됐다 — 모델이 몇 개든 분당 12건에 묶여 대기 물량이 안 빠졌다.
+RATE_LIMIT_RPM = 12          # 모델당. 실제 한도 15 에서 여유를 뒀다
 _MIN_GAP = 60.0 / RATE_LIMIT_RPM
 _gate = asyncio.Lock()
-_last_call = 0.0
+_last_call: dict[str, float] = {}
 
 
-async def _throttle():
-    """호출 간격을 벌려 분당 한도를 넘지 않게 한다."""
-    global _last_call
+async def _throttle(model: str):
+    """그 **모델의** 직전 호출과 간격을 벌린다."""
     async with _gate:
         now = asyncio.get_running_loop().time()
-        wait = _MIN_GAP - (now - _last_call)
+        wait = _MIN_GAP - (now - _last_call.get(model, 0.0))
         if wait > 0:
             await asyncio.sleep(wait)
-        _last_call = asyncio.get_running_loop().time()
+        _last_call[model] = asyncio.get_running_loop().time()
+
+
+# 매번 같은 모델부터 시작하면 그 모델만 한도를 다 쓰고 나머지는 논다.
+# 호출마다 시작 지점을 옮겨 부하를 고르게 편다.
+_rr = 0
+
+
+def _rotate(models: list[str]) -> list[str]:
+    global _rr
+    if len(models) < 2:
+        return models
+    _rr = (_rr + 1) % len(models)
+    return models[_rr:] + models[:_rr]
 
 
 # 한도에 걸린 모델과 **다시 시도해도 되는 시각**.
@@ -221,14 +235,14 @@ async def generate_json(system_prompt: str, user_prompt: str,
         )
         return resp.text or ""
 
-    models = _usable(_candidates())
+    models = _rotate(_usable(_candidates()))
     if not models:
         return None                      # 오늘 쓸 수 있는 모델 없음 — 헛호출하지 않는다
     last_err = None
     for model in models:
         for attempt in range(3):
             try:
-                await _throttle()
+                await _throttle(model)
                 return _extract_json(
                     await asyncio.wait_for(asyncio.to_thread(_call, model), CALL_TIMEOUT)
                 )
@@ -262,7 +276,7 @@ async def summarize_insight(item: NewsItem, posted_at: str) -> dict | None:
     """
     user_prompt = build_insight_prompt(item.body, item.url, posted_at,
                                        has_image=bool(item.image))
-    models = _usable(_candidates())
+    models = _rotate(_usable(_candidates()))
     if not models:
         return None                      # 오늘 쓸 수 있는 모델 없음 — 헛호출하지 않는다
     last_err = None
@@ -270,7 +284,7 @@ async def summarize_insight(item: NewsItem, posted_at: str) -> dict | None:
     for model in models:
         for attempt in range(3):
             try:
-                await _throttle()
+                await _throttle(model)
                 text = await asyncio.wait_for(
                     asyncio.to_thread(_generate_vision_sync, model, user_prompt,
                                       item.image, item.image_mime),
@@ -327,14 +341,14 @@ async def summarize_briefing(item: NewsItem) -> dict | None:
     user_prompt = build_user_prompt(
         item.source, item.title, item.url, item.body, item.region_hint
     )
-    models = _usable(_candidates())
+    models = _rotate(_usable(_candidates()))
     if not models:
         return None
     last_err = None
     for model in models:
         for attempt in range(3):
             try:
-                await _throttle()
+                await _throttle(model)
                 text = await asyncio.wait_for(
                     asyncio.to_thread(_generate_briefing_sync, model, user_prompt),
                     CALL_TIMEOUT,
@@ -366,7 +380,7 @@ async def summarize(item: NewsItem) -> dict | None:
     user_prompt = build_user_prompt(
         item.source, item.title, item.url, item.body, item.region_hint
     )
-    models = _usable(_candidates())
+    models = _rotate(_usable(_candidates()))
     if not models:
         return None                      # 오늘 쓸 수 있는 모델 없음 — 헛호출하지 않는다
     last_err = None
@@ -374,7 +388,7 @@ async def summarize(item: NewsItem) -> dict | None:
     for model in models:
         for attempt in range(3):
             try:
-                await _throttle()
+                await _throttle(model)
                 text = await asyncio.wait_for(
                     asyncio.to_thread(_generate_sync, model, user_prompt), CALL_TIMEOUT
                 )

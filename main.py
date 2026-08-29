@@ -16,6 +16,7 @@
     python main.py --resort --only 이슈       # 특정 탭만
 """
 import asyncio
+import os
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -210,9 +211,11 @@ def publish_order(items: list[NewsItem]) -> list[NewsItem]:
     return sorted(items, key=lambda i: i.published_at or float("inf"))
 
 
-# 무료 티어는 분당 15건이다. summarizer 가 12건/분으로 스로틀하므로
-# 동시 실행을 늘려도 처리량은 안 늘고 429만 늘어난다.
-SUMMARY_CONCURRENCY = 2
+# 동시 요약 수.
+# 예전엔 2였다 — 스로틀이 전역이라 늘려도 처리량이 안 늘고 429만 늘었기 때문이다.
+# 이제 스로틀이 **모델별**이라(분당 15건/모델, 실측) 모델 수만큼 병렬이 의미가 있다.
+# 모델 7개 × 분당 12건 = 이론상 84건/분. 그중 안전하게 일부만 쓴다.
+SUMMARY_CONCURRENCY = int(os.getenv("SUMMARY_CONCURRENCY", "6"))
 
 # 실행 예산 중 요약 단계에 쓸 비율. 나머지는 발행에 남긴다.
 # 요약이 예산을 전부 먹으면 발행 루프가 통째로 밀려, 애써 요약한 결과를 버리게 된다.
@@ -300,7 +303,9 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         # 시간 상한이 걸린 실행(CI)에서는 어차피 처리 못 할 분량까지 요약하면 낭비다.
         # 병목은 발행이 아니라 요약이다. summarizer 의 전역 스로틀(RATE_LIMIT_RPM)이
         # 호출 하나당 60/RPM 초를 강제하므로, 그 처리량으로 상한을 계산한다.
-        per_item = 60.0 / summarizer.RATE_LIMIT_RPM
+        # 처리량 = 동시 실행 수 × (분당 한도 / 60). 스로틀이 모델별이 된 뒤로는
+        # 동시 실행이 실제로 처리량을 늘린다. 예전 식은 직렬 가정이라 과소평가했다.
+        per_item = 60.0 / (summarizer.RATE_LIMIT_RPM * SUMMARY_CONCURRENCY)
         cap = max(1, int(budget * SUMMARIZE_BUDGET_RATIO / per_item))
         if len(pending) > cap:
             print(f"[요약] 시간 상한 고려해 {len(pending)}건 중 {cap}건만 처리")
