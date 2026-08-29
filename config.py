@@ -83,7 +83,11 @@ class Settings:
         ("규제:한국", "가상자산 규제 금융위 OR 금감원 OR 디지털자산기본법 when:7d", "ko", "KR", "KR:ko", "한국/규제"),
         ("규제:일본", "暗号資産 規制 金融庁 OR ステーブルコイン when:7d", "ja", "JP", "JP:ja", "일본/규제"),
         ("규제:홍콩", "Hong Kong crypto regulation SFC OR stablecoin when:7d", "en-US", "US", "US:en", "홍콩/규제"),
-        ("규제:싱가포르", "Singapore crypto regulation MAS OR digital token when:7d", "en-US", "US", "US:en", "싱가포르/규제"),
+        ("규제:싱가포르", # 현행 "Singapore crypto regulation MAS OR digital token" 은 구글이
+         # `Singapore crypto regulation (MAS OR digital token)` 로 풀어
+         # 싱가포르와 무관한 글로벌 규제 기사를 물어왔다(51건 중 9건만 싱가포르).
+         # MAS 를 따옴표로 고정하니 20건 중 18건이 싱가포르 건이 됐다.
+         'Singapore "MAS" crypto OR digital asset OR stablecoin when:14d', "en-US", "US", "US:en", "싱가포르/규제"),
         ("규제:UAE", "UAE OR Dubai crypto regulation VARA OR ADGM when:7d", "en-US", "US", "US:en", "UAE/규제"),
         ("규제:베트남", "quy định tài sản số OR crypto Việt Nam when:7d", "vi", "VN", "VN:vi", "베트남/규제"),
         ("규제:중국", "China crypto regulation PBOC OR digital yuan when:7d", "en-US", "US", "US:en", "중국/규제"),
