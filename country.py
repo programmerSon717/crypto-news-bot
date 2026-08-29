@@ -61,6 +61,33 @@ def detect(text: str) -> str | None:
     return winners[0] if len(winners) == 1 else None
 
 
+# 증시 탭 전용 판정 신호 — **지수 이름**.
+#
+# 일반 나라 단어로만 세면 증시 기사가 엉뚱한 탭에 간다. 실제 사고:
+# "코스피 1.79% 하락, 금리 경계 반도체로 번졌다" 가 US Equities 로 갔다.
+# 본문에 코스피가 3번 나오는데 미국·연준·Fed 가 5번 나와 미국이 이긴 것이다.
+# 하지만 그 기사의 주어는 코스피다. 증시 기사에서는 **지수가 곧 그 시장**이므로
+# 지수 이름만으로 먼저 판정한다.
+INDEX_SIGNALS: dict[str, tuple[str, ...]] = {
+    "KR": ("코스피", "코스닥", "KOSPI", "KOSDAQ"),
+    "US": ("나스닥", "S&P", "다우", "Nasdaq", "Dow", "러셀"),
+    "JP": ("니케이", "Nikkei"),
+    "CN": ("상하이종합", "항셍", "Hang Seng", "Shanghai Composite"),
+}
+EQUITY_TABS = {"Korea Equities", "US Equities"}
+
+
+def detect_index(text: str) -> str | None:
+    """지수 이름으로 본 시장. 동점이거나 없으면 None(일반 판정에 맡긴다)."""
+    scores = {c: sum(text.count(w) for w in ws) for c, ws in INDEX_SIGNALS.items()}
+    scores = {c: n for c, n in scores.items() if n}
+    if not scores:
+        return None
+    top = max(scores.values())
+    winners = [c for c, v in scores.items() if v == top]
+    return winners[0] if len(winners) == 1 else None
+
+
 def text_of(data: dict) -> str:
     parts = [data.get("headline", ""), data.get("lede", ""),
              *(data.get("bullets") or []), data.get("context", "")]
@@ -115,7 +142,19 @@ def enforce(category: str, data: dict) -> tuple[str, str | None]:
     if not want:
         return category, None       # 이슈는 나라 제약이 없다
 
-    found = detect(text_of(data))
+    text = text_of(data)
+
+    # 증시 탭은 지수 이름이 우선이다(위 INDEX_SIGNALS 설명 참고).
+    if category in EQUITY_TABS:
+        idx = detect_index(text)
+        if idx and idx != want:
+            dest = DEST.get(idx, {}).get("equities") or DEST.get(idx, {}).get("rates")
+            if dest and dest != category:
+                return dest, f"{category} → {dest} (지수 기준 {idx})"
+        if idx == want:
+            return category, None   # 지수가 맞으면 나라 단어 빈도로 뒤집지 않는다
+
+    found = detect(text)
     if found is None or found == want:
         return category, None
 

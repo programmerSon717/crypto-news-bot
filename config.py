@@ -30,7 +30,13 @@ class Settings:
     poll_rss_sec: int = int(os.getenv("POLL_RSS_SEC", "420"))             # 뉴스 RSS
 
     # 발행 필터: 중요도(1~5)가 이 값 미만이면 발행하지 않음
-    min_importance: int = int(os.getenv("MIN_IMPORTANCE", "3"))
+    min_importance: int = int(os.getenv("MIN_IMPORTANCE", "4"))
+    # 나라별 정책 탭은 문턱을 낮춘다.
+    # 규제 기사는 모델이 3점을 주는 일이 많아 4로 걸면 나라별 탭이 통째로 빈다
+    # (홍콩 샌드박스 명단, 베트남 거래소 인가 대기 등이 전부 3점이었다).
+    # 반대로 문턱을 전체적으로 3으로 내렸더니 이번엔 프로젝트 홍보성 글이
+    # 이슈 탭으로 새어 나왔다. 그래서 탭 성격에 따라 다르게 건다.
+    policy_min_importance: int = int(os.getenv("POLICY_MIN_IMPORTANCE", "3"))
 
     # 이 시간보다 오래된 기사는 발행하지 않는다(0이면 제한 없음).
     # 무료 한도가 빡빡해 과거 기사까지 처리하면 정작 최신 뉴스가 밀린다.
@@ -85,12 +91,15 @@ class Settings:
         # (Decenter·The Block·CoinDesk 규제·Blockhead·BlockBeats·Odaily·Caixin·
         #  Foresight News·VIR — 전부 피드 경로 탐색 실패)
         ("Decenter", "site:decenter.kr 가상자산 OR 디지털자산 OR 스테이블코인 when:7d", "ko", "KR", "KR:ko", "한국/규제"),
+        # 중국어 원문 정책 기사. 위 영어 쿼리는 서방 매체만 잡아서
+        # 인민은행·증감회의 실제 발표를 놓친다.
+        ("규제:중국", "中国 加密货币 OR 稳定币 OR 区块链 监管 OR 政策 when:7d",
+         "zh-CN", "CN", "CN:zh-Hans", "중국/규제"),
         ("CoinDesk 규제", "site:coindesk.com regulation OR SEC OR policy when:7d", "en-US", "US", "US:en", "미국/규제"),
         ("The Block", "site:theblock.co regulation OR policy OR SEC when:7d", "en-US", "US", "US:en", "미국/규제"),
         ("Blockhead", "site:blockhead.co MAS OR regulation OR tokenisation when:7d", "en-US", "US", "US:en", "싱가포르/규제"),
         ("BlockBeats", "site:theblockbeats.info 香港 OR 监管 OR 稳定币 when:7d", "zh-CN", "CN", "CN:zh-Hans", "중국/규제"),
         ("Odaily", "site:odaily.news 监管 OR 稳定币 OR 香港 when:7d", "zh-CN", "CN", "CN:zh-Hans", "중국/규제"),
-        ("Caixin", "site:caixin.com 央行 OR 数字人民币 OR 加密 when:7d", "zh-CN", "CN", "CN:zh-Hans", "중국/규제"),
         ("Foresight News", "site:foresightnews.pro 香港 OR 监管 OR RWA when:7d", "zh-CN", "CN", "CN:zh-Hans", "홍콩/규제"),
         ("Vietnam Investment Review", "site:vir.com.vn crypto OR blockchain OR digital asset when:7d", "en-US", "US", "US:en", "베트남/규제"),
     ])

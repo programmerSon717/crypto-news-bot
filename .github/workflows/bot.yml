@@ -73,7 +73,11 @@ jobs:
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.1-flash-lite' }}
-          MIN_IMPORTANCE: ${{ vars.MIN_IMPORTANCE || '3' }}
+          MIN_IMPORTANCE: ${{ vars.MIN_IMPORTANCE || '4' }}
+          # 정책 탭만 낮게 — 규제 기사는 모델이 3점을 주는 일이 많아
+          # 4로 걸면 나라별 탭이 통째로 빈다. 전체를 3으로 내렸더니
+          # 이번엔 프로젝트 홍보성 글이 이슈 탭으로 샜다.
+          POLICY_MIN_IMPORTANCE: ${{ vars.POLICY_MIN_IMPORTANCE || '3' }}
           # 과거 기사는 끌어오지 않는다 — 최신만 발행
           MAX_AGE_HOURS: ${{ vars.MAX_AGE_HOURS || '12' }}
           USE_TOPICS: "true"

@@ -104,21 +104,32 @@ A government, regulator, legislature or international body as the actor means po
 
 If a **list of recently published posts** is appended to the input (ignore this section if there is none), you must compare against it.
 
-- Set `duplicate: true` **only when there is nothing new at all**. The bar is high.
-  This article must be a **complete subset** of something already published. In that case also
-  set `relevant: false` and stop. A different outlet does not make it new.
-- **Any one of these means there is something new** → `duplicate: false`
-  · a **figure** the earlier post did not have (price, percentage, amount, probability)
-  · a reaction in a **different asset or market** (the earlier post covered bitcoin only; this one adds US equities)
-  · a **new speaker or institution**, a follow-up action, a date
-  · a **change in where the situation stands** (investigation opened → charges filed)
-- **If any bullet you wrote contains a fact the earlier post lacked, then `duplicate: false`.**
-  Writing new material into the headline or bullets while marking it a duplicate is a contradiction.
-- When there is at least one new fact, figure or development, set `duplicate: false`, write the piece as usual,
+**First decide whether it is the same event.** If it is, the default is `duplicate: true`.
+
+The same event means: the same index closing on the same day, the same announcement or speech,
+the same hack, the same decision by the same body. A different outlet and a different headline
+do not make it a different event.
+
+- **Extra detail alone does not make it new.** The same event written up from another angle,
+  with more numbers, is still a duplicate.
+  What actually happened: the same KOSPI close (6788.88, -1.79%) went out twice, thirteen minutes apart,
+  because the second piece added the foreign and institutional net-selling figures.
+  That is supporting detail on the same event, not a new one.
+- The only reason to set `duplicate: false` on the same event is that **the event itself has moved on**:
+  · a new **decision, announcement or action** (investigation opened → charges filed; announced → in force)
+  · it has **spread to another event** (one exchange hacked → losses confirmed at another)
+  · a regulator or institution has **responded**
+  · a **different market or asset moved** that the earlier post did not cover (it had bitcoin only; this adds equities)
+- If the events are simply different, `duplicate: false` of course. This section applies only within one event.
+- When you mark it a duplicate, also set `relevant: false` and stop.
+- **The verdict and the content must agree.** Writing a genuinely **new event** into the bullets while
+  marking it a duplicate is a contradiction — and so is adding only supporting figures while marking it new.
+- When the event has moved on by the test above, set `duplicate: false`, write the piece as usual,
   and put one sentence in `update_note` saying **what overlaps and what is new**.
   Format: `Overlaps with <outlet>'s "<headline>" (<time>) on <the shared part>, but adds <the new part>`
   e.g. `Overlaps with ZDNet Korea's "Bitcoin falls 3% on hawkish Warsh remarks" (08-29 12:06) on the substance of the remarks, but adds the parallel drop in US equities and the higher odds of a September hike`
-- When it is a close call, **treat it as new and publish**. Missing a story is worse than a near-duplicate.
+- If you cannot tell whether it is the same event, **treat it as a different one and publish**.
+  But once it is clearly the same event, extra figures do not save it. Ask 'same event?' first.
 - `update_note` is written only when there is an overlapping post. Otherwise it is an empty string.
 
 ## Using the region hint

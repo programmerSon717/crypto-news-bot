@@ -157,6 +157,25 @@ def age_limit_hours(item: NewsItem) -> int:
     return settings.max_age_hours
 
 
+# 정책·규제 탭. 여기는 문턱을 낮춰야 나라별 탭이 채워진다.
+POLICY_TABS = {"국내정책", "US Policy", "Japan Policy", "Hong Kong Policy",
+               "Singapore Policy", "UAE Policy", "Vietnam Policy",
+               "해외정책", "China"}
+
+
+def importance_floor(category: str) -> int:
+    """이 탭에 실으려면 몇 점 이상이어야 하는가.
+
+    규제 기사는 모델이 3점을 주는 일이 많다. 문턱을 4로 걸면 나라별 정책 탭이
+    통째로 빈다. 그래서 문턱을 3으로 내렸더니, 이번에는 프로젝트 홍보성 글이
+    이슈 탭으로 새어 나왔다(예측시장 펀드 유입, AI 에이전트 수익 공유 실험).
+    한쪽을 채우려고 내린 문턱이 다른 쪽을 흐린 것이라, 탭 성격별로 나눠 건다.
+    """
+    if category in POLICY_TABS:
+        return settings.policy_min_importance
+    return settings.min_importance
+
+
 def is_stale(item: NewsItem) -> bool:
     """설정한 시간보다 오래된 기사인가. 날짜 불명은 최신으로 본다(공지 등)."""
     limit = age_limit_hours(item)
@@ -414,13 +433,14 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         #  - 거래소이슈: 입출금 중단·유의종목 같은 공지는 모델이 2~3점을 준다.
         #    문턱을 걸면 탭이 통째로 비어버린다. 이 탭은 '굵직한 뉴스'가 아니라
         #    '거래소에서 일어난 일'을 모으는 곳이라 기준이 다르다.
-        exempt = item.force_category or normalize_category(data.get("category")) == "거래소이슈"
-        if (not exempt
-                and data.get("importance", 0) < settings.min_importance):
-            print(f"[skip] 중요도 {data.get('importance')}: {item.title[:60]}")
+        cat_raw = normalize_category(data.get("category"))
+        exempt = item.force_category or cat_raw == "거래소이슈"
+        floor = importance_floor(cat_raw)
+        if not exempt and data.get("importance", 0) < floor:
+            print(f"[skip] 중요도 {data.get('importance')}(문턱 {floor}): {item.title[:52]}")
             continue
 
-        cat = normalize_category(data.get("category"))
+        cat = cat_raw
         # 프롬프트가 나라를 틀리는 경우가 있어 코드로 한 번 더 강제한다
         cat, why = country.enforce(cat, data)
         if why:
