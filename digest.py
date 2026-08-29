@@ -18,6 +18,7 @@ import httpx
 
 import topics
 from config import settings
+from i18n import T
 from prompts import (
     DIGEST_SYSTEM_PROMPT,
     OVERVIEW_SYSTEM_PROMPT,
@@ -57,7 +58,7 @@ def render_category_digest(category: str, label: str, count: int, data: dict) ->
     e = html.escape
     bullets = "\n".join(f"• {e(b)}" for b in data.get("bullets", []))
     parts = [
-        f"🗂 <b>{e(tab_name(category))} · {e(label)} 정리</b>",
+        f"🗂 <b>{e(tab_name(category))} · {e(label)} {T('digest_title')}</b>",
         "",
         e(data.get("summary", "")),
     ]
@@ -65,7 +66,7 @@ def render_category_digest(category: str, label: str, count: int, data: dict) ->
         parts += ["", f"<blockquote>{bullets}</blockquote>"]
     if data.get("takeaway"):
         parts += ["", f"🐧 {e(data['takeaway'])}"]
-    parts += ["", f"<i>이 시간대 발행 {count}건</i>"]
+    parts += ["", f"<i>{T('digest_count').format(n=count)}</i>"]
     return "\n".join(parts)
 
 
@@ -82,17 +83,17 @@ def render_overview(label: str, total: int, data: dict) -> str:
         blocks += [f"• {e(x)}" for x in items]
     lines = "\n".join(blocks)
     parts = [
-        f"🕐 <b>{e(label)} 브리핑</b>",
+        f"🕐 <b>{e(label)} {T('overview_title')}</b>",
         "",
         f"<b>{e(data.get('headline', ''))}</b>",
         "",
         e(data.get("summary", "")),
     ]
     if lines:
-        parts += ["", "📋 <b>카테고리별</b>", f"<blockquote>{lines}</blockquote>"]
+        parts += ["", f"📋 <b>{T('overview_by_cat')}</b>", f"<blockquote>{lines}</blockquote>"]
     if data.get("takeaway"):
         parts += ["", f"🐧 {e(data['takeaway'])}"]
-    parts += ["", f"<i>이 시간대 총 {total}건</i>"]
+    parts += ["", f"<i>{T('overview_count').format(n=total)}</i>"]
     return "\n".join(parts)
 
 

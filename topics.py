@@ -11,6 +11,7 @@ import os
 
 import httpx
 
+import i18n
 from config import settings
 
 API = f"https://api.telegram.org/bot{settings.telegram_bot_token}"
@@ -52,6 +53,13 @@ CATEGORIES = {
     "거래소이슈": ("🏦거래소이슈", 0xFFD67E),
     "이슈": ("🚨주요이슈", 0xCB86DB),
 }
+
+# 영문판은 같은 키에 다른 표시 이름을 쓴다. 키·색상·순서는 그대로 둔다 —
+# 라우팅과 분류는 키로만 하므로 이름만 바꾸면 나머지 코드가 안 흔들린다.
+# 한국어일 때는 tab_names() 가 None 이라 위 값이 그대로 쓰인다.
+_names = i18n.tab_names()
+if _names:
+    CATEGORIES = {k: (_names.get(k, n), c) for k, (n, c) in CATEGORIES.items()}
 
 
 def _load() -> dict:

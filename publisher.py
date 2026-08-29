@@ -6,6 +6,7 @@ import re
 import httpx
 
 import topics
+from i18n import T
 from config import settings
 
 API = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
@@ -86,7 +87,7 @@ def render(data: dict, url: str) -> str:
     origin_text = (data.get("origin_text") or "").strip()
     if origin_text:
         author, _ = origin_of(data)
-        parts += ["", f"🗣 <b>{e(author)} 원문</b>",
+        parts += ["", f"🗣 <b>{e(author)} {T('author_original')}</b>",
                   f"<blockquote expandable>{e(origin_text)}</blockquote>"]
         ko = (data.get("origin_text_ko") or "").strip()
         if ko:
@@ -94,15 +95,15 @@ def render(data: dict, url: str) -> str:
 
     parts += [
         "",
-        f"📁 <b>{e(data.get('section_title', '주요내용'))}</b>",
+        f"📁 <b>{e(data.get('section_title') or T('section_default'))}</b>",
         f"<blockquote>{bullets}</blockquote>",
     ]
 
     # 트위터 캡처 인사이트 경로에서만 채워지는 필드들. 일반 뉴스에는 없으므로 있을 때만 붙인다.
     for emoji, key, label in (
-        ("📌", "context", "배경"),
-        ("📈", "impact", "영향"),
-        ("🔍", "watch", "지켜볼 포인트"),
+        ("📌", "context", T("insight_context")),
+        ("📈", "impact", T("insight_impact")),
+        ("🔍", "watch", T("insight_watch")),
     ):
         val = (data.get(key) or "").strip()
         # 모델이 스키마 설명을 따라 앞에 이모지를 붙여 오는 경우가 있어 중복을 제거한다.
@@ -119,12 +120,12 @@ def render(data: dict, url: str) -> str:
     # 독자가 "아까 본 것 같은데" 하고 넘기지 않도록.
     note = (data.get("update_note") or "").strip().removeprefix("🔁").strip()
     if note:
-        parts += ["", f"🔁 <b>업데이트</b>", e(note), ""]
+        parts += ["", f"🔁 <b>{T('update')}</b>", e(note), ""]
 
     # 실시간이 아닌 글(백필 등)은 언제 올라온 글인지 밝혀준다.
     posted = data.get("_posted_label")
     if posted and not data.get("_headline_in_caption"):   # 캡션에 이미 넣었으면 생략
-        parts += [f"🕒 {e(posted)} 게시", ""]
+        parts += [f"🕒 {e(posted)} {T('posted')}", ""]
 
     parts += [_source_line(data, url), "", e(tags)]
     return "\n".join(parts)
@@ -231,7 +232,7 @@ def _source_line(data: dict, url: str) -> str:
     e = html.escape
     # 퍼온 글이 아니면 수집처가 곧 원문이다(RSS 기사 등).
     if not (data.get("_repost") or data.get("_insight")):
-        link = f'<a href="{e(url)}">기사 원문</a>'
+        link = f'<a href="{e(url)}">{T("source_link")}</a>'
         media = source_label(data.get("_source_name", ""))
         return f"{link} - {e(media)}" if media else link
 
