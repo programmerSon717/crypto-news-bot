@@ -553,8 +553,11 @@ async def main():
         if once:
             # GitHub Actions 등 스케줄러에서 주기적으로 호출하는 모드: 1회 수집 후 종료
             items = await collect_all(client)
-            print(f"[once] {len(items)}건 수집")
-            await process_items(client, items, warm=False)
+            print(f"[once] {len(items)}건 수집"
+                  f"{' — dry-run: 발행하지 않음' if dry_run else ''}")
+            # dry_run 을 넘기지 않아 `--once --dry-run` 이 실제로 발행해버렸다.
+            # 진단하려고 돌린 명령이 채널에 글을 올리면 안 된다.
+            await process_items(client, items, warm=False, dry_run=dry_run)
             print("[once] 완료")
             return
 

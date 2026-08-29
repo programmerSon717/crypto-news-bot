@@ -8,7 +8,9 @@ Gemini SDK는 동기라 asyncio.to_thread 로 감싸 async 인터페이스를 �
 """
 import asyncio
 import json
+import os
 import re
+import time
 
 from google import genai
 from google.genai import types
@@ -52,9 +54,21 @@ async def _throttle():
         _last_call = asyncio.get_running_loop().time()
 
 
-# 일일 한도를 소진한 모델. 한 번 걸리면 그 실행 동안 다시 시도하지 않는다.
-# 이걸 안 하면 죽은 모델에 재시도를 반복해 실행이 수십 분씩 멈춘다.
-_exhausted: set[str] = set()
+# 한도에 걸린 모델과 **다시 시도해도 되는 시각**.
+#
+# 예전에는 집합(set)이라 한 번 걸리면 프로세스가 끝날 때까지 영영 제외했다.
+# 실행이 2~8분이던 시절엔 맞았지만, 5시간 30분짜리 루프로 바뀐 뒤로는
+# 새벽 한 번의 오류로 아침 내내 요약이 멈춘다(실측: 08:07 이후 3시간 발행 0).
+#
+# 게다가 구글이 주는 오류는 quotaId 가 PerDay 인데도 retryDelay 가 26초다.
+# 즉 '오늘 끝'이 아니라 '잠시 뒤 다시'인 경우가 있다. 그래서 영구 배제 대신
+# 일정 시간 쉬었다가 다시 써본다.
+COOLDOWN_SEC = int(os.getenv("MODEL_COOLDOWN_SEC", "900"))   # 15분
+_exhausted: dict[str, float] = {}
+
+
+def _rest(model: str, seconds: float | None = None):
+    _exhausted[model] = time.monotonic() + (seconds or COOLDOWN_SEC)
 
 
 def _is_quota_exhausted(msg: str) -> bool:
@@ -74,14 +88,15 @@ def _candidates() -> list[str]:
 
 
 def _usable(models: list[str]) -> list[str]:
-    """아직 살아 있는 모델만. 전부 소진이면 빈 목록을 준다.
+    """아직 쓸 수 있는 모델만. 쉬는 시간이 끝난 모델은 다시 포함된다.
 
     예전에는 전부 소진일 때 목록을 그대로 돌려줘 '어쩔 수 없이 다시 시도'했는데,
     그러면 건마다 모델 수만큼 429 를 받아낸다. _throttle() 이 전역이라 호출 하나당
     5초가 붙어, 소진된 날에는 100여 건 처리에 40분이 걸려 job 타임아웃에 잘렸다.
     살아 있는 모델이 없으면 그냥 포기하는 게 맞다.
     """
-    return [m for m in models if m not in _exhausted]
+    now = time.monotonic()
+    return [m for m in models if _exhausted.get(m, 0) <= now]
 
 
 def all_exhausted() -> bool:
@@ -209,10 +224,11 @@ async def generate_json(system_prompt: str, user_prompt: str,
                 last_err = e
                 msg = str(e)
                 if _is_quota_exhausted(msg):
-                    # 그날 한도가 끝난 모델이다. 기다려도 안 되니 바로 다음 모델로.
-                    if model not in _exhausted:
-                        _exhausted.add(model)
-                        print(f"[모델] {model} 일일 한도 소진 — 이번 실행에서 제외")
+                    # 한도에 걸렸다. 응답이 알려준 재시도 시각이 있으면 그만큼만 쉰다.
+                    if _exhausted.get(model, 0) <= time.monotonic():
+                        wait = max(_retry_after(msg), 60)
+                        _rest(model, wait)
+                        print(f"[모델] {model} 한도 — {wait/60:.0f}분 쉬었다 다시 시도")
                     break
                 if _retryable(e, msg):
                     delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \
@@ -257,10 +273,11 @@ async def summarize_insight(item: NewsItem, posted_at: str) -> dict | None:
                 last_err = e
                 msg = str(e)
                 if _is_quota_exhausted(msg):
-                    # 그날 한도가 끝난 모델이다. 기다려도 안 되니 바로 다음 모델로.
-                    if model not in _exhausted:
-                        _exhausted.add(model)
-                        print(f"[모델] {model} 일일 한도 소진 — 이번 실행에서 제외")
+                    # 한도에 걸렸다. 응답이 알려준 재시도 시각이 있으면 그만큼만 쉰다.
+                    if _exhausted.get(model, 0) <= time.monotonic():
+                        wait = max(_retry_after(msg), 60)
+                        _rest(model, wait)
+                        print(f"[모델] {model} 한도 — {wait/60:.0f}분 쉬었다 다시 시도")
                     break
                 if _retryable(e, msg):
                     delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \
@@ -358,10 +375,11 @@ async def summarize(item: NewsItem) -> dict | None:
                 msg = str(e)
                 # 과부하/레이트리밋이면 잠시 쉬었다 재시도, 그 외 오류는 다음 모델로
                 if _is_quota_exhausted(msg):
-                    # 그날 한도가 끝난 모델이다. 기다려도 안 되니 바로 다음 모델로.
-                    if model not in _exhausted:
-                        _exhausted.add(model)
-                        print(f"[모델] {model} 일일 한도 소진 — 이번 실행에서 제외")
+                    # 한도에 걸렸다. 응답이 알려준 재시도 시각이 있으면 그만큼만 쉰다.
+                    if _exhausted.get(model, 0) <= time.monotonic():
+                        wait = max(_retry_after(msg), 60)
+                        _rest(model, wait)
+                        print(f"[모델] {model} 한도 — {wait/60:.0f}분 쉬었다 다시 시도")
                     break
                 if _retryable(e, msg):
                     delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \
