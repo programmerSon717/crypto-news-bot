@@ -57,6 +57,65 @@ def collect_git():
     }
 
 
+# 되돌리기가 '보존'하는 경로. rollback.yml 의 목록과 반드시 같아야 한다.
+# 이 경로만 바꾼 커밋은 되돌려도 봇 동작이 하나도 안 바뀌므로 버전 목록에서 뺀다.
+# (안 그러면 문서만 고친 커밋에 '적용'을 눌렀는데 아무 일도 안 일어난다)
+PRESERVED = ("botstate.sqlite3", "topics.json", "docs/", "admin/",
+             "HANDOFF.md", "RULES.md", ".github/workflows/rollback.yml")
+
+
+def collect_versions(limit=25):
+    """되돌릴 수 있는 '코드 버전' 목록.
+
+    발행 이력 커밋이 20분마다 쌓이므로 그냥 git log 를 보여주면 실제로 무엇이
+    바뀐 버전인지 사람이 못 고른다. 코드·설정·워크플로를 건드린 커밋만 남긴다.
+    """
+    raw = sh("git", "log", "origin/main", "-200",
+             "--format=%x1e%H%x1f%ct%x1f%s%x1f%b%x1f", "--name-only")
+    head = sh("git", "rev-parse", "HEAD")
+    out = []
+    for block in raw.split("\x1e"):
+        if not block.strip():
+            continue
+        parts = block.split("\x1f")
+        if len(parts) < 5:
+            continue
+        sha, ts, subject, body = parts[0].strip(), parts[1], parts[2], parts[3]
+        files = [f for f in parts[4].splitlines() if f.strip()]
+        code = [f for f in files if not f.startswith(PRESERVED)]
+        if not code:
+            continue
+        note = next((l.strip() for l in body.splitlines() if l.strip()), "")
+        out.append({
+            "sha": sha,
+            "short": sha[:7],
+            "ts": int(ts),
+            "when": kst(int(ts)),
+            "subject": subject,
+            "note": note[:160],
+            "files": code[:12],
+            "file_count": len(code),
+            "revert": subject.startswith("revert:"),
+            "current": False,
+        })
+        if len(out) >= limit:
+            break
+
+    # '지금 돌고 있는 버전'은 HEAD 커밋이 아니다. HEAD 가 문서·상태 커밋이면
+    # 실제로 적용 중인 로직은 그보다 앞선 코드 커밋이다. HEAD 의 조상 중
+    # 가장 최근 코드 버전을 찾아 표시한다.
+    for v in out:
+        if _is_ancestor(v["sha"], head):
+            v["current"] = True
+            break
+    return out
+
+
+def _is_ancestor(sha, head):
+    return subprocess.run(["git", "merge-base", "--is-ancestor", sha, head],
+                          cwd=ROOT, capture_output=True).returncode == 0
+
+
 def collect_runs():
     data = get_json(f"{REPO_API}/actions/runs?per_page=15")
     if "_error" in data:
@@ -187,10 +246,12 @@ def main():
     sys.path.insert(0, ROOT)
     snap = {
         "generated_at": kst(datetime.datetime.now(KST).timestamp()),
+        "repo": REPO_API.rsplit("/repos/", 1)[-1],
         "git": collect_git(),
         "actions": collect_runs(),
         "db": collect_db(os.path.join(ROOT, "botstate.sqlite3")),
         "backups": collect_backups(),
+        "versions": collect_versions(),
     }
     snap["rhythm"] = poll_rhythm(snap["git"]["commits"])
     try:

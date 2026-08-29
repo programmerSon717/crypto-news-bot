@@ -144,9 +144,22 @@ def annotate_origin(data: dict, item: NewsItem):
     data["_posted_label"] = dt.strftime("%Y-%m-%d %H:%M KST")
 
 
+def age_limit_hours(item: NewsItem) -> int:
+    """이 항목에 적용할 나이 상한.
+
+    국가별 규제 기사만 따로 넉넉하게 본다. 구글뉴스 검색 결과라 색인이 늦고
+    when:7d 로 긁어오는데, 일반 기사와 같은 12시간을 적용하면 195건 중 1건만
+    남아 나라별 정책 탭이 통째로 빈다. 게시 시각은 본문에 항상 표기되므로
+    독자는 오래된 기사임을 알 수 있고, 중복 판정이 이미 나간 사건의 반복을 막는다.
+    """
+    if (item.region_hint or "").endswith("/규제"):
+        return settings.regulation_max_age_hours
+    return settings.max_age_hours
+
+
 def is_stale(item: NewsItem) -> bool:
     """설정한 시간보다 오래된 기사인가. 날짜 불명은 최신으로 본다(공지 등)."""
-    limit = settings.max_age_hours
+    limit = age_limit_hours(item)
     if not limit or item.published_at is None:
         return False
     return datetime.now(tz=KST).timestamp() - item.published_at > limit * 3600
@@ -464,7 +477,8 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
     if deferred:
         print(f"[집계] 시간 상한({budget}초) 도달 — {deferred}건은 다음 실행으로 미룸")
     if stale:
-        print(f"[집계] {settings.max_age_hours}시간 초과된 과거 기사 {stale}건 제외")
+        print(f"[집계] 과거 기사 {stale}건 제외 "
+              f"(일반 {settings.max_age_hours}시간 / 규제 {settings.regulation_max_age_hours}시간)")
     if dup:
         print(f"[집계] 다른 피드로 이미 처리한 같은 기사 {dup}건 제외")
     if dropped:
