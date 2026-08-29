@@ -118,17 +118,29 @@ def _retry_after(msg: str) -> float:
             pass
     return 20.0
 
-# 기본 모델이 과부하(503)·소진일 때 순서대로 시도할 대체 모델.
+# 기본 모델이 소진·과부하일 때 순서대로 시도할 대체 모델.
 #
-# 2026-08-26 실측 — 무료 티어 일일 한도(429 응답의 quotaValue)는 모델마다 다르다:
-#   gemini-3.1-flash-lite   500건/일   ← 유일하게 상시 운영이 가능한 창구
-#   gemini-3.7-flash         20건/일
-#   gemini-3.5-flash         20건/일
-#   gemini-3-flash-preview   20건/일
-# 그래서 주 모델(GEMINI_MODEL)은 flash-lite 로 두고, 나머지는 소진 후 예비로만 쓴다.
-# 이 순서를 되돌리면 하루 20건 만에 발행이 멈춘다.
-FALLBACK_MODELS = ["gemini-3.1-flash-lite", "gemini-3.7-flash",
-                   "gemini-3.5-flash", "gemini-3-flash-preview"]
+# **한도는 모델마다 따로 매겨진다.** 그래서 모델을 늘리면 하루 처리량이 그만큼 는다.
+# 2026-08-29 실측 — 무료 티어 일일 한도(429 응답의 quotaValue):
+#   gemini-3.1-flash-lite   500건/일   ← 주 모델
+#   gemini-flash-latest      20건/일
+#   나머지 flash 계열         20건/일
+#
+# 아래 셋은 안 쓰던 모델이다. 같은 기사로 실제 요약을 시켜 품질을 비교해 골랐다
+# (한국어·JSON 형식·수치 보존·인명 보존·코멘트 문장력 전부 확인).
+#   gemini-3.6-flash          가장 최신 full flash. 문장이 매끄럽고 맥락 파악이 정확
+#   gemini-flash-lite-latest  최신 lite 별칭. 3.1-flash-lite 와 한도 통이 분리돼 있다(실측)
+#   gemini-3.5-flash-lite     안정적. 형식 준수 완벽
+#
+# 넣지 않은 것:
+#   gemini-3.1-flash-lite-preview — 주 모델과 한도 통을 공유한다(같이 소진됨)
+#   gemma-4-*                     — Gemini 계열이 아니고 형제 모델이 빈 응답을 준 적이 있다
+#   gemini-2.5-*                  — 퇴역(generateContent 불가)
+#
+# 순서는 **품질 순**이다. 앞에서부터 쓰다가 한도에 걸리면 다음으로 넘어간다.
+FALLBACK_MODELS = ["gemini-3.1-flash-lite", "gemini-3.6-flash",
+                   "gemini-flash-lite-latest", "gemini-3.5-flash-lite",
+                   "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3-flash-preview"]
 
 _config = types.GenerateContentConfig(
     system_instruction=SYSTEM_PROMPT,
