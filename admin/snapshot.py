@@ -60,9 +60,7 @@ def collect_git():
 # 되돌리기가 '보존'하는 경로. rollback.yml 의 목록과 반드시 같아야 한다.
 # 이 경로만 바꾼 커밋은 되돌려도 봇 동작이 하나도 안 바뀌므로 버전 목록에서 뺀다.
 # (안 그러면 문서만 고친 커밋에 '적용'을 눌렀는데 아무 일도 안 일어난다)
-PRESERVED = ("botstate.sqlite3", "topics.json",
-             "botstate_en.sqlite3", "topics_en.json",
-             "docs/", "admin/",
+PRESERVED = ("botstate.sqlite3", "topics.json", "docs/", "admin/",
              "HANDOFF.md", "RULES.md", ".github/workflows/rollback.yml")
 
 
