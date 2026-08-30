@@ -166,9 +166,14 @@ def _build_tags(data: dict) -> str:
     """탭 이름 태그를 맨 앞에 두고, 모델이 준 주제 태그를 뒤에 붙인다."""
     import topics as _topics
     banned = set()
-    for key in _topics.CATEGORIES:
+    for key, (name, _c) in _topics.CATEGORIES.items():
         if " " in key:                       # 여러 단어짜리 내부 키만 막는다
             banned |= {key.replace(" ", "").lower(), key.replace(" ", "_").lower()}
+        # 탭 표시 이름에서 나온 태그도 막는다. 코드가 맨 앞에 이미 붙이므로
+        # 모델이 같은 걸 또 주면 `#ExchangeWatch #ExchangeWatch` 가 된다.
+        t = _tab_tag(key)
+        if t:
+            banned.add(t[1:].lower())
 
     out: list[str] = []
     first = _tab_tag(data.get("category", ""))

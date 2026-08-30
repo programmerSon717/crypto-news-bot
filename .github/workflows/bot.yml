@@ -73,10 +73,10 @@ jobs:
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.1-flash-lite' }}
-          MIN_IMPORTANCE: ${{ vars.MIN_IMPORTANCE || '4' }}
-          # 정책 탭만 낮게 — 규제 기사는 모델이 3점을 주는 일이 많아
-          # 4로 걸면 나라별 탭이 통째로 빈다. 전체를 3으로 내렸더니
-          # 이번엔 프로젝트 홍보성 글이 이슈 탭으로 샜다.
+          # 3 이 기본이다. 4로 올리면 토큰화 주식 거래량·온체인 출금 같은
+          # 진짜 시장 뉴스까지 잘린다(실측: 유효 20건 중 발행 가능 1건).
+          # 범위는 중요도가 아니라 주제로 가른다 — prompts 의 '크립토 관련성' 절.
+          MIN_IMPORTANCE: ${{ vars.MIN_IMPORTANCE || '3' }}
           POLICY_MIN_IMPORTANCE: ${{ vars.POLICY_MIN_IMPORTANCE || '3' }}
           # 과거 기사는 끌어오지 않는다 — 최신만 발행
           MAX_AGE_HOURS: ${{ vars.MAX_AGE_HOURS || '12' }}

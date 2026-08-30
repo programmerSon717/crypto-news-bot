@@ -158,17 +158,50 @@ do not make it a different event.
 - **Do not leave any Korean, Chinese or Japanese characters in the output.** Summarising a Chinese or Japanese article tends to leak source words. Translate the meaning: 鹰派 → **hawkish**, 鸽派 → **dovish**, 美联储 → **the Fed**, 加息 → **rate hike**, 降息 → **rate cut**, 稳定币 → **stablecoin**, 매파 → **hawkish**, 금융위 → **the FSC**.
   The only exception is a local-language name inside brackets after the English one.
 
-## Crypto relevance (judging `relevant` — be strict)
-This is a crypto / blockchain / digital-asset channel. Discard the following as **relevant=false**.
-- General news with no crypto angle: semiconductors, cars, property, politics, entertainment, sport, weather, consumer tech
+## Crypto relevance (judging `relevant`)
+
+What this channel covers is **crypto, tokenisation and blockchain**. That has to be the **subject** of the piece.
+
+**If the subject is crypto, publish it** — importance 3 is fine. For example:
+- where tokenised-equity volume went, which venue pulled ahead
+- on-chain facts (large withdrawals, wallet moves, a premium indicator turning)
+- third-party market figures (market-cap comparisons, fund flows)
+- a real dispute about the security or technology of a crypto asset
+
+**Discard the following as relevant=false.**
+- **Pieces whose subject is a prediction market.** Polymarket, Kalshi, ParlayX and the like —
+  their growth, fund inflows, volume, executive commentary, and the regulation or litigation aimed at them.
+  Running on a chain does not by itself make it this channel's subject.
+- **Pieces whose subject is AI.** AI agent economies, AI companies' earnings, funding and products,
+  data centres, chip demand. A token attached to it does not change the subject.
+- General news with no crypto angle: semiconductors, cars, property, politics, entertainment, sport, weather
 - General equity or macro news **with no link to crypto in the body**
   (except stories that belong in the rates or equities tabs — those are within scope, so relevant=true)
 - Personal chatter, community memes
-- When it is a close call, **discard**. Letting unrelated posts through is worse than missing one.
+
+**But do not discard something that merely appears as the instrument.** Decide by what the subject is.
+- `A link from an AI chatbot drained a wallet` → the subject is **the theft**. Publish.
+- `Can a quantum computer break Bitcoin's signatures` → the subject is **Bitcoin security**. Publish.
+- `An AI agent shares its revenue with token holders` → the subject is **an AI business model**. Discard.
+- `Institutional money is flowing into prediction markets` → the subject is **prediction markets**. Discard.
+
+When it is a close call, **write the subject out in one sentence**; publish if that subject is crypto, tokenisation or blockchain.
 
 ## Judging importance
-- Routine maintenance notices, promotions and airdrop marketing: importance 1-2.
-- Regulatory change, major listings, hacks and security incidents, policy announcements: importance 4-5.
+
+- **1-2**: routine maintenance notices, event and airdrop marketing, a project presenting its own business,
+  pieces with no event at all — only "is growing", "is drawing attention".
+- **3**: something that actually happened in the market. **This is the channel's bread and butter — do not be stingy here.**
+  · volume, market cap, fund flows and other **third-party figures**, and how they changed
+  · **on-chain facts** — large withdrawals, wallet moves, a premium or flow indicator turning
+  · a real dispute about the technology or security of a specific asset or protocol
+  · a company or institution's crypto business decision (partnership, acquisition, product launch)
+- **4-5**: regulatory change, major listings and delistings, hacks and security incidents,
+  policy announcements, anything that moves the whole market.
+
+If there are figures and a third party has confirmed them, it is **at least a 3**. Do not give a 2
+because "it is not big news" — that judgement is already made by `relevant`, not by importance.
+
 - If there is a title but no body, write only what the title clearly supports and do not fill the bullets with guesses.
 
 ## Preserve the facts in the source — the most important rule
@@ -506,3 +539,65 @@ Region hint: {region_hint or "unknown"}
 Title: {title}
 URL: {url}
 Body / summary: {body or "(no body — judge from the title alone)"}{build_recent_block(recent or [])}"""
+
+
+# ── 한국어판 과거분 이관용 ──
+# 영문판을 시작할 때 한국어판이 이미 발행한 글을 그대로 옮긴다.
+# 원 기사를 다시 긁지 않고 **이미 만들어 둔 결과물**을 재료로 쓴다 —
+# 옛 URL 은 상당수가 죽었고, 사실관계는 이미 검증돼 있으며, 요약을 두 번
+# 하지 않으니 무료 한도를 아낀다. 그래서 이건 '요약'이 아니라 '옮기기'다.
+TRANSLATE_SYSTEM_PROMPT = """You are translating posts from a Korean crypto-news channel into English for its sister channel.
+
+This is a translation task, not a rewrite. The Korean post was already fact-checked and published.
+
+## Hard rules
+- **Keep every fact, figure, date, name and institution exactly as given.** Do not add, drop, round or "correct" anything, even if you believe you know better. If a name looks unfamiliar, it is still the name.
+- **Keep the same number of bullets, in the same order.** One Korean bullet becomes one English bullet.
+- Do not introduce analysis, context or forecasts that are not in the Korean text.
+- If the Korean text is uncertain ("~로 알려졌다"), keep that uncertainty in English ("is understood to").
+
+## Voice
+- Plain news prose, dense, no hype. The same register as the Korean.
+- The 🐧 comment keeps its character: a short, level-headed observation with a light touch. Not a summary of the bullets.
+- No investment advice. "Worth watching" rather than "recommended".
+- Give institutions their English name, with the local acronym where it helps: Financial Services Commission (FSC), Bank of Korea (BOK), Financial Intelligence Unit (FIU).
+- Korean market terms: 코스피 → KOSPI, 코스닥 → KOSDAQ, 금융위 → the FSC, 특금법 → the Act on Reporting and Use of Specified Financial Transaction Information, 가상자산이용자보호법 → the Virtual Asset User Protection Act.
+- **No Korean, Chinese or Japanese characters may remain**, except a local-language name inside brackets after the English one.
+- A proper noun written in Chinese or Japanese characters (a token, a company) is **romanised by the reading of its own language**, with the original in brackets on first mention: 牛来 → Niulai (牛来), not an invented reading. If you are unsure of the reading, keep the original characters in brackets and describe it ("a BSC meme coin") rather than guessing.
+- **"국내" means Korea, not "domestic".** The English reader is not in Korea. 국내 이용자 → Korean users; 국내 증시 → the Korean stock market; 국내 거래소 → Korean exchanges. The same goes for 해외 → outside Korea / international, depending on what it means in context.
+
+## Hashtags
+Translate the topical tags. **Drop any tag that names a channel section**, whether or not it came first —
+the code puts the section tag at the front by itself. Tags like #ExchangeIssue, #TopStories, #USPolicy,
+#GlobalMacro, #KoreaPolicy are section names: leave them out and give only what the piece is about.
+Keep them short and topical: #Fed #FOMC #CPI #Regulation #Listing #Hack #Stablecoin #ETF.
+
+## Output JSON schema
+{
+  "headline": "one line, no emoji",
+  "lede": "the ☑️ summary, 1-2 sentences",
+  "section_title": "the heading above the quote block",
+  "bullets": ["same count and order as the input"],
+  "comment": "the 🐧 comment",
+  "update_note": "translate if present, otherwise an empty string",
+  "context": "translate if present, otherwise an empty string",
+  "impact": "translate if present, otherwise an empty string",
+  "watch": "translate if present, otherwise an empty string",
+  "hashtags": ["topical tags in English"]
+}"""
+
+
+def build_translate_prompt(d: dict) -> str:
+    lines = [f"Headline: {d.get('headline','')}",
+             f"Lede: {d.get('lede','')}",
+             f"Section title: {d.get('section_title','')}",
+             "Bullets:"]
+    lines += [f"  - {b}" for b in d.get("bullets", [])]
+    lines.append(f"Penguin comment: {d.get('comment','')}")
+    for k, label in (("update_note", "Update note"), ("context", "Context"),
+                     ("impact", "Impact"), ("watch", "What to watch")):
+        if d.get(k):
+            lines.append(f"{label}: {d[k]}")
+    if d.get("hashtags"):
+        lines.append("Hashtags: " + " ".join("#" + t for t in d["hashtags"]))
+    return "\n".join(lines)
