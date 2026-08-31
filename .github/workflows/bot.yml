@@ -133,7 +133,7 @@ jobs:
             # 커밋 작성자는 git log 에 적히는 문자열일 뿐이라 발행·폴링과 무관하다.
             if [[ -f "$DIGEST_FLAG" ]]; then
               git config user.name  "programmerSon717"
-              git config user.email "programmerSon717@gmail.com"
+              git config user.email "73008892+programmerSon717@users.noreply.github.com"
               MSG="digest: $(TZ=Asia/Seoul date '+%m-%d %H시') 브리핑 [skip ci]"
               rm -f "$DIGEST_FLAG"
             else
@@ -256,7 +256,7 @@ jobs:
           if [[ -n "$(git status --porcelain botstate.sqlite3 docs)" ]]; then
             if [[ -f /tmp/digest_published ]]; then
               git config user.name  "programmerSon717"
-              git config user.email "programmerSon717@gmail.com"
+              git config user.email "73008892+programmerSon717@users.noreply.github.com"
             else
               git config user.name  "github-actions[bot]"
               git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
