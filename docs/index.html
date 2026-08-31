@@ -101,19 +101,18 @@ button[disabled]{opacity:.45;cursor:not-allowed}
   font-weight:600;letter-spacing:-.02em;color:var(--patina)}
 .count .lbl{font-family:var(--mono);font-size:10px;letter-spacing:.12em;
   text-transform:uppercase;color:var(--ink-3)}
-.cal{display:flex;gap:3px;overflow-x:auto;padding-bottom:4px}
-.cal .wk{display:flex;flex-direction:column;gap:3px}
-.cal i{width:11px;height:11px;border-radius:2px;background:var(--sunk);
-  border:1px solid var(--rule);display:block}
-.cal i[data-l="1"]{background:#9BE9A8;border-color:#9BE9A8}
-.cal i[data-l="2"]{background:#40C463;border-color:#40C463}
-.cal i[data-l="3"]{background:#30A14E;border-color:#30A14E}
-.cal i[data-l="4"]{background:#216E39;border-color:#216E39}
-.cal i.today{outline:2px solid var(--patina);outline-offset:1px}
-.legend{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-3);
-  font-family:var(--mono)}
-.legend i{width:11px;height:11px;border-radius:2px;display:block;background:var(--sunk);
-  border:1px solid var(--rule)}
+.isowrap{overflow-x:auto;border:1px solid var(--rule);border-radius:2px;
+  background:var(--sunk);padding:10px}
+#iso{display:block;height:auto}
+.grass-foot{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;
+  font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+.legend{display:flex;align-items:center;gap:5px}
+.legend i{width:11px;height:11px;border-radius:2px;display:block;
+  background:var(--sunk);border:1px solid var(--rule-2)}
+.legend i.l1{background:#9BE9A8;border-color:#9BE9A8}
+.legend i.l2{background:#40C463;border-color:#40C463}
+.legend i.l3{background:#30A14E;border-color:#30A14E}
+.legend i.l4{background:#216E39;border-color:#216E39}
 .err{border:1px solid var(--bad);background:var(--bad-bg);color:var(--bad);padding:12px 14px;border-radius:3px;font-size:13.5px}
 </style>
 </head>
@@ -162,11 +161,13 @@ button[disabled]{opacity:.45;cursor:not-allowed}
           <span class="lbl">다음 잔디까지</span>
           <span class="note" id="grass-next"></span>
         </div>
-        <div class="cal" id="grass-cal"></div>
-        <div class="legend">
-          <span id="grass-range"></span><span style="flex:1"></span>
-          <span>적음</span><i></i><i data-l="1"></i><i data-l="2"></i>
-          <i data-l="3"></i><i data-l="4"></i><span>많음</span>
+        <div class="isowrap"><canvas id="iso"></canvas></div>
+        <div class="grass-foot">
+          <span id="grass-range"></span>
+          <span id="grass-total"></span>
+          <span style="flex:1"></span>
+          <span class="legend">적음<i></i><i class="l1"></i><i class="l2"></i>
+            <i class="l3"></i><i class="l4"></i>많음</span>
         </div>
         <p class="note" id="grass-note"></p>
       </div>
@@ -389,29 +390,72 @@ function tickGrass(){
     `${String(at.getHours()).padStart(2,'0')}시 브리핑 발행 시점 (KST) · 실제 커밋은 그 뒤 20분 안`;
 }
 
+/* 기여 그래프를 아이소메트릭 블록으로 그린다.
+   평면 히트맵보다 '쌓인다'는 감각이 살아서, 하루에 몇 건이 심겼는지가 높이로 보인다.
+   Canvas 로 그리는 이유: 371칸 × 3면 = 1100여 개 도형이라 DOM 으로 만들면 무겁다. */
+const ISO = {
+  tw: 15, th: 8,        // 타일 폭·높이(2:1 아이소메트릭)
+  unit: 7,              // 기여 1단계당 쌓이는 높이
+  base: 3,              // 기여 없는 날의 판 두께
+  top:  ['#2A313C', '#9BE9A8', '#40C463', '#30A14E', '#216E39'],
+  left: ['#222833', '#6FB97C', '#2E9A4C', '#22803D', '#18542B'],
+  right:['#1C222B', '#579463', '#237A3C', '#1A6630', '#114220'],
+};
+
 function drawCalendar(days){
-  const cal = $('#grass-cal');
-  cal.replaceChildren();
-  if (!days.length) return;
+  const cv = document.getElementById('iso');
+  if (!cv || !days.length) return;
+  const ctx = cv.getContext('2d');
+
   // 첫 칸이 일요일이 되도록 앞을 비운다
   const pad = new Date(days[0].date + 'T00:00:00').getDay();
   const cells = Array(pad).fill(null).concat(days);
-  const today = new Date().toISOString().slice(0, 10);
-  for (let i = 0; i < cells.length; i += 7){
-    const wk = el('div', 'wk');
-    for (const d of cells.slice(i, i + 7)){
-      const c = el('i');
-      if (d){
-        if (d.level) c.dataset.l = d.level;
-        if (d.date === today) c.className = 'today';
-        c.title = `${d.date} · ${d.count}건`;
-      } else {
-        c.style.visibility = 'hidden';
-      }
-      wk.append(c);
-    }
-    cal.append(wk);
+  const cols = Math.ceil(cells.length / 7), rows = 7;
+  const maxH = ISO.base + ISO.unit * 4 + 6;
+
+  const w = (cols + rows) * ISO.tw / 2 + 4;
+  const h = (cols + rows) * ISO.th / 2 + maxH + 4;
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = w * dpr; cv.height = h * dpr;
+  cv.style.width = w + 'px'; cv.style.height = h + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  const ox = rows * ISO.tw / 2, oy = maxH;
+  const face = (pts, color) => {
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  };
+
+  // 뒤에서 앞으로 그린다(화가 알고리즘). c+r 이 작을수록 뒤쪽이다.
+  const order = [];
+  for (let c = 0; c < cols; c++)
+    for (let r = 0; r < rows; r++) order.push([c, r]);
+  order.sort((a, b) => (a[0] + a[1]) - (b[0] + b[1]));
+
+  for (const [c, r] of order){
+    const d = cells[c * 7 + r];
+    if (d === undefined) continue;
+    const lv = d ? (d.level || 0) : 0;
+    const z  = d ? (lv ? ISO.base + ISO.unit * lv : ISO.base) : ISO.base;
+    const x  = ox + (c - r) * ISO.tw / 2;
+    const y  = oy + (c + r) * ISO.th / 2;
+    const hw = ISO.tw / 2, hh = ISO.th / 2;
+
+    // 윗면
+    face([[x, y - z], [x + hw, y + hh - z], [x, y + ISO.th - z], [x - hw, y + hh - z]],
+         d ? ISO.top[lv] : '#232A34');
+    // 왼쪽·오른쪽 옆면
+    face([[x - hw, y + hh - z], [x, y + ISO.th - z], [x, y + ISO.th], [x - hw, y + hh]],
+         d ? ISO.left[lv] : '#1B212A');
+    face([[x, y + ISO.th - z], [x + hw, y + hh - z], [x + hw, y + hh], [x, y + ISO.th]],
+         d ? ISO.right[lv] : '#161C24');
   }
+
   $('#grass-range').textContent = `${days[0].date} ~ ${days[days.length-1].date}`;
 }
 
@@ -427,14 +471,13 @@ async function loadGrass(){
     drawCalendar(days);
     const total = d.total?.lastYear ?? days.reduce((a,b)=>a+b.count,0);
     const today = days[days.length-1];
+    $('#grass-total').textContent = `최근 1년 ${total}건 · 오늘 ${today ? today.count : 0}건`;
     $('#grass-note').textContent =
-      `최근 1년 ${total}건 · 오늘 ${today ? today.count : 0}건. `
-      + `총괄 브리핑이 나간 회차만 사람 이름으로 커밋한다 — 폴링 커밋(하루 70여 건)까지 `
+      `총괄 브리핑이 나간 회차만 사람 이름으로 커밋한다 — 폴링 커밋(하루 70여 건)까지 `
       + `사람 이름으로 돌리면 실제 작업이 묻힌다.`;
   }catch(e){
-    $('#grass-cal').replaceChildren(el('p','note',
-      '기여 데이터를 불러오지 못했다(외부 API). 카운트다운은 그대로 동작한다.'));
-    $('#grass-note').textContent = '';
+    $('#grass-note').textContent =
+      '기여 데이터를 불러오지 못했다(외부 API). 카운트다운은 그대로 동작한다.';
   }
 }
 
