@@ -93,6 +93,27 @@ button[disabled]{opacity:.45;cursor:not-allowed}
   align-self:center;animation:pulse 1.4s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
 @media (prefers-reduced-motion:reduce){.live .dot{animation:none}}
+.grass{display:flex;flex-direction:column;gap:12px}
+.count{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;padding:13px 15px;
+  border:1px solid var(--rule);border-left:3px solid var(--patina);border-radius:2px;
+  background:var(--sunk)}
+.count b{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:26px;
+  font-weight:600;letter-spacing:-.02em;color:var(--patina)}
+.count .lbl{font-family:var(--mono);font-size:10px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-3)}
+.cal{display:flex;gap:3px;overflow-x:auto;padding-bottom:4px}
+.cal .wk{display:flex;flex-direction:column;gap:3px}
+.cal i{width:11px;height:11px;border-radius:2px;background:var(--sunk);
+  border:1px solid var(--rule);display:block}
+.cal i[data-l="1"]{background:#9BE9A8;border-color:#9BE9A8}
+.cal i[data-l="2"]{background:#40C463;border-color:#40C463}
+.cal i[data-l="3"]{background:#30A14E;border-color:#30A14E}
+.cal i[data-l="4"]{background:#216E39;border-color:#216E39}
+.cal i.today{outline:2px solid var(--patina);outline-offset:1px}
+.legend{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-3);
+  font-family:var(--mono)}
+.legend i{width:11px;height:11px;border-radius:2px;display:block;background:var(--sunk);
+  border:1px solid var(--rule)}
 .err{border:1px solid var(--bad);background:var(--bad-bg);color:var(--bad);padding:12px 14px;border-radius:3px;font-size:13.5px}
 </style>
 </head>
@@ -131,6 +152,25 @@ button[disabled]{opacity:.45;cursor:not-allowed}
         <div class="bars" id="cats"></div>
       </section>
     </div>
+
+    <section class="panel" style="margin-top:18px">
+      <header><h2>잔디</h2><span class="eyebrow" id="grass-user"></span></header>
+      <div class="grass">
+        <!-- 카운트다운은 잔디 블록 바로 위에 둔다 -->
+        <div class="count">
+          <b id="grass-eta">—</b>
+          <span class="lbl">다음 잔디까지</span>
+          <span class="note" id="grass-next"></span>
+        </div>
+        <div class="cal" id="grass-cal"></div>
+        <div class="legend">
+          <span id="grass-range"></span><span style="flex:1"></span>
+          <span>적음</span><i></i><i data-l="1"></i><i data-l="2"></i>
+          <i data-l="3"></i><i data-l="4"></i><span>많음</span>
+        </div>
+        <p class="note" id="grass-note"></p>
+      </div>
+    </section>
 
     <section class="panel" style="margin-top:18px">
       <header><h2>최근 발행</h2><span class="eyebrow" id="pub-count"></span></header>
@@ -319,6 +359,85 @@ function renderVersions(){
   });
 }
 
+/* ───────── 잔디(기여 그래프) ─────────
+   봇 코드는 건드리지 않는다. 이 패널은 순전히 이 페이지 안에서만 돈다 —
+   기여 데이터는 GitHub 공개 데이터를 중계하는 API 에서 브라우저가 직접 받아온다.
+
+   잔디는 커밋 작성자 이메일이 계정에 등록된 것과 일치할 때만 찍힌다.
+   봇의 폴링 커밋은 github-actions[bot] 이름이라 안 찍히고,
+   **총괄 브리핑이 나간 회차만** 사람 이름(noreply 주소)으로 커밋한다. */
+const GH_USER = 'programmerSon717';
+
+/* 브리핑은 KST 매시 첫 폴링(분 < 20)에서 나간다. 다음 정시가 다음 심기 시점이다. */
+function nextPlanting(){
+  const now = new Date();
+  const kst = new Date(now.getTime() + (now.getTimezoneOffset() + 540) * 60000);
+  const next = new Date(kst);
+  next.setMinutes(0, 0, 0);
+  next.setHours(next.getHours() + 1);
+  return {ms: next - kst, at: next};
+}
+
+function tickGrass(){
+  const {ms, at} = nextPlanting();
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const hh = String(Math.floor(s / 3600)).padStart(2, '0');
+  const mm = String(Math.floor(s % 3600 / 60)).padStart(2, '0');
+  const ss = String(s % 60).padStart(2, '0');
+  $('#grass-eta').textContent = `${hh}:${mm}:${ss}`;
+  $('#grass-next').textContent =
+    `${String(at.getHours()).padStart(2,'0')}시 브리핑 발행 시점 (KST) · 실제 커밋은 그 뒤 20분 안`;
+}
+
+function drawCalendar(days){
+  const cal = $('#grass-cal');
+  cal.replaceChildren();
+  if (!days.length) return;
+  // 첫 칸이 일요일이 되도록 앞을 비운다
+  const pad = new Date(days[0].date + 'T00:00:00').getDay();
+  const cells = Array(pad).fill(null).concat(days);
+  const today = new Date().toISOString().slice(0, 10);
+  for (let i = 0; i < cells.length; i += 7){
+    const wk = el('div', 'wk');
+    for (const d of cells.slice(i, i + 7)){
+      const c = el('i');
+      if (d){
+        if (d.level) c.dataset.l = d.level;
+        if (d.date === today) c.className = 'today';
+        c.title = `${d.date} · ${d.count}건`;
+      } else {
+        c.style.visibility = 'hidden';
+      }
+      wk.append(c);
+    }
+    cal.append(wk);
+  }
+  $('#grass-range').textContent = `${days[0].date} ~ ${days[days.length-1].date}`;
+}
+
+async function loadGrass(){
+  $('#grass-user').textContent = '@' + GH_USER;
+  tickGrass();
+  setInterval(tickGrass, 1000);
+  try{
+    const r = await fetch(`https://github-contributions-api.jogruber.de/v4/${GH_USER}?y=last`);
+    if(!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    const days = (d.contributions || []).filter(x => x.date <= new Date().toISOString().slice(0,10));
+    drawCalendar(days);
+    const total = d.total?.lastYear ?? days.reduce((a,b)=>a+b.count,0);
+    const today = days[days.length-1];
+    $('#grass-note').textContent =
+      `최근 1년 ${total}건 · 오늘 ${today ? today.count : 0}건. `
+      + `총괄 브리핑이 나간 회차만 사람 이름으로 커밋한다 — 폴링 커밋(하루 70여 건)까지 `
+      + `사람 이름으로 돌리면 실제 작업이 묻힌다.`;
+  }catch(e){
+    $('#grass-cal').replaceChildren(el('p','note',
+      '기여 데이터를 불러오지 못했다(외부 API). 카운트다운은 그대로 동작한다.'));
+    $('#grass-note').textContent = '';
+  }
+}
+
 async function load(){
   const bust=`?t=${Date.now()}`;
   const [s,h]=await Promise.all([
@@ -409,6 +528,8 @@ function render(){
   $('#restore-cmd').textContent=dir?`cd ~/Desktop/HanwhaDAPnews\nmv crypto-news-bot crypto-news-bot.broken-$(date +%Y%m%d-%H%M)\ncp -a "${dir.path}/project" crypto-news-bot\ncd crypto-news-bot && python3 -m venv venv && venv/bin/pip install -r requirements.txt`:'# 백업 폴더가 없다';
 
   renderVersions();
+
+  if(!window._grassOn){ window._grassOn = 1; loadGrass(); }
 
   $('#gen').textContent=hhmm(D.generated_at)+' KST';
   $('#hist-n').textContent=H.length;
