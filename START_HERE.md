@@ -26,9 +26,15 @@
 
 ---
 
+## 1-1. 대기 중인 작업
+
+`PENDING.md` 를 먼저 봐라. 지금 넘어가는 작업과 그 배경이 적혀 있다.
+끝낸 항목은 그 파일에서 지우면 된다.
+
 ## 2. 새 세션이 읽어야 할 순서
 
 ```
+0  PENDING.md                          지금 넘어가는 작업
 1  이 파일 (START_HERE.md)              전체 지형
 2  crypto-news-bot/RULES.md             사용자가 반복 지시한 절대 규칙
 3  crypto-news-bot/HANDOFF.md           한국어판 전체 (구조·운영·함정·남은 일)

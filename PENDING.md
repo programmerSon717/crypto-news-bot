@@ -1,0 +1,75 @@
+# 대기 중인 작업
+
+> 새 세션은 이 파일을 먼저 확인해라. 끝난 항목은 지우면 된다.
+> 최종 갱신: 2026-09-04
+
+---
+
+## 1. 발행량·한도 재측정 — 2026-09-05 15:27 KST 이후
+
+**왜:** 2026-09-04 에 두 가지를 바꿨다.
+- 발행 범위를 가격·수급 제외 / 규제·제도 중심으로 (프롬프트, 양쪽 리포)
+- 가격 기사를 모델 호출 전에 거르는 사전 필터 (코드, 양쪽 리포)
+
+그 효과를 하루 뒤에 재기로 했다.
+
+**어떻게:** 명령 한 줄이면 된다. 읽기만 하며 봇을 건드리지 않는다.
+
+```bash
+cd ~/Desktop/HanwhaDAPnews && python3 tools/measure_daily.py --stdout
+```
+
+`--stdout` 을 빼면 `reports/YYYY-MM-DD.md` 로 저장된다.
+
+**무엇을 볼 것인가**
+
+| | 기준선 (09-03, 변경 전) | 예측치 |
+|---|---|---|
+| 한국어판 발행 | 357건 | 약 214건 |
+| 영문판 발행 | 273건 | 약 156건 |
+| 합계 | 630건 | 약 370건 |
+
+- 규제·정책 탭 비중이 늘었는지가 핵심이다 (목적이 각국 규제 모니터링이다)
+- 한도는 리셋(16:00 KST) 직전에 봐야 하루치 소모량이 잡힌다
+- 너무 줄었다면 원인을 구분해라 — 수집이 준 것인지 · 필터가 과한 것인지 · 한도에 걸린 것인지
+
+**주의:** 표본 검증에 모델을 많이 부르면 한도를 또 먹는다. 2026-09-04 에 50건씩
+100번을 불러 주 모델 일일 한도를 소진시킨 적이 있다. 필요하면 10건 이하로.
+
+---
+
+## 2. 영문판 `WORKFLOW_PAT` — 아직 없음
+
+영문 리포에 이 시크릿이 없어 자체 체인이 끊기고, cron 공백이 그대로 정지가 된다.
+2026-09-03 에 실제로 3시간 넘게 멈췄다. 로그: `다음 루프 예약 실패 (HTTP ...)`
+
+사용자가 만들어 줘야 한다 — fine-grained PAT, `crypto-news-bot-en` 만,
+**Actions: Read and write**, 만료 없음. 등록 방법은
+`crypto-news-bot-en/HANDOFF.local.md`.
+
+---
+
+## 3. launchd 자동 측정 — 권한 때문에 막혀 있음
+
+`~/Library/LaunchAgents/com.woojin.cryptonews.measure.plist` 를 등록해 뒀지만
+macOS 가 막는다. launchd 로 도는 프로세스는 `~/Desktop` 을 못 읽는다(TCC 보호).
+
+```
+/usr/bin/python3: can't open file '.../measure_daily.py': [Errno 1] Operation not permitted
+```
+
+**풀려면 둘 중 하나다.**
+
+1. 시스템 설정 → 개인정보 보호 및 보안 → **전체 디스크 접근 권한** 에
+   `/usr/bin/python3` 를 추가한다. 그 뒤:
+   ```bash
+   launchctl kickstart -k gui/$(id -u)/com.woojin.cryptonews.measure
+   cat ~/Desktop/HanwhaDAPnews/reports/_launchd.err   # 비어 있으면 성공
+   ```
+2. 그냥 손으로 돌린다 — 위 1번 항목의 명령 한 줄.
+
+권한을 안 줄 거면 등록을 지워도 된다.
+```bash
+launchctl unload ~/Library/LaunchAgents/com.woojin.cryptonews.measure.plist
+rm ~/Library/LaunchAgents/com.woojin.cryptonews.measure.plist
+```
