@@ -44,6 +44,72 @@ CRYPTO_PAT = re.compile(
 BODY_SCAN = 600
 
 
+
+# ── 가격·시황 기사를 모델 호출 전에 걸러낸다 ──
+#
+# 이 채널의 목적은 각국 규제·제도 흐름을 놓치지 않는 것이다. 시세 중계가 아니다.
+# 그런데 수집물의 상당수가 가격 기사라, 요약을 해보고 나서야 버리게 된다.
+# 실측(2026-09-03): 발행 78건에 요약 호출 500건이 나가 주 모델 일일 한도를 소진했다.
+# 제목에서 미리 잡으면 그 호출을 통째로 아낀다.
+#
+# **오탐이 가장 위험하다.** "SEC, ETF 자금 유입 급증에 승인 경로 재검토" 같은 글은
+# 가격 낱말이 있어도 규제 기사다. 그래서 규제·제도 신호가 하나라도 있으면 무조건
+# 살린다(KEEP_PAT 이 PRICE_PAT 을 이긴다). 놓치는 쪽이 낭비보다 나쁘다.
+
+PRICE_PAT = re.compile(
+    r"급등|급락|폭등|폭락|치솟|고꾸라|반등|조정 국면|"
+    r"사상 최고가|신고가|최고치 경신|저점|고점|"
+    r"목표가|목표주가|가격 전망|시세 전망|전망치 상향|전망치 하향|"
+    r"지지선|저항선|기술적 분석|차트|이평선|"
+    r"프리미엄 지표|김치 프리미엄|도미넌스|시총 순위|시가총액 비교|"
+    r"순유입|순유출|순매수|순매도|자금 유입|자금 유출|입출금 규모|"
+    r"고래 지갑|대규모 출금|대규모 이체|온체인 수급|"
+    r"\d+% ?(상승|하락|급등|급락|오르|내리)|\d+배 (상승|급등)|"
+    r"surge[ds]?|plunge[ds]?|soar[s]?|slump|rally|rebound|"
+    r"all-time high|price target|price forecast|technical analysis|"
+    r"support level|resistance level|dominance|net inflow|net outflow|"
+    r"whale wallet|large withdrawal",
+    re.I)
+
+# 이 신호가 있으면 가격 낱말이 있어도 살린다. 규제·제도·사건이 주어인 글이다.
+KEEP_PAT = re.compile(
+    r"규제|정책|법안|입법|시행령|가이드라인|당국|감독|인가|허가|라이선스|승인|반려|"
+    r"제재|과징금|기소|소송|판결|과세|세제|"
+    r"금융위|금감원|FIU|기재부|한국은행|국회|"
+    r"토큰증권|증권형 토큰|STO|RWA|실물자산|토큰화|"
+    r"해킹|탈취|유출|취약점|익스플로잇|"
+    r"상장 폐지|거래지원 종료|유의종목|"
+    r"SEC|CFTC|FSA|MAS|VARA|SFC|HKMA|BIS|FATF|ESMA|MiCA|"
+    r"regulat|polic|legislat|licen[cs]|approv|denie|sanction|lawsuit|ruling|tax|"
+    r"security token|tokeni[sz]|real.world asset|"
+    r"hack|exploit|breach|delist",
+    re.I)
+
+# 거시지표는 사용자가 유지하라고 한 것이다(2026-09-04). 지표 이름이 보이면 살린다.
+# "미국 7월 공장 주문 0.9% 증가하며 반등" 처럼 '반등' 때문에 잘리던 것을 막는다.
+MACRO_PAT = re.compile(
+    r"\bCPI\b|\bPCE\b|\bPPI\b|\bPMI\b|\bGDP\b|\bFOMC\b|"
+    r"소비자물가|생산자물가|물가상승률|인플레이션|고용지표|실업률|비농업|"
+    r"기준금리|금리 결정|금리 인상|금리 인하|점도표|국채 금리|"
+    r"공장 주문|산업생산|소매판매|무역수지|경상수지|구매관리자|"
+    r"연준|연방준비|중앙은행|한국은행|인민은행|일본은행|유럽중앙은행|"
+    r"consumer price|producer price|inflation|unemploy|payroll|"
+    r"interest rate|rate (decision|hike|cut)|treasury yield|"
+    r"factory order|industrial production|retail sales|trade balance|"
+    r"federal reserve|central bank",
+    re.I)
+
+
+def is_price_story(item) -> bool:
+    """가격·시황이 주제라 모델을 부를 값어치가 없는가.
+
+    제목만 본다. 본문까지 보면 스치듯 언급된 가격 얘기에도 걸려 규제 기사를 버린다.
+    """
+    title = item.title or ""
+    if KEEP_PAT.search(title) or MACRO_PAT.search(title):
+        return False
+    return bool(PRICE_PAT.search(title))
+
 def is_offtopic(item) -> bool:
     """이 기사를 요약 없이 버려도 되는가."""
     # 지표·정책 이벤트(긴급 레인)는 크립토 낱말이 없는 게 정상이다 — 건드리지 않는다.

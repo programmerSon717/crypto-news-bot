@@ -327,7 +327,8 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
                if not store.is_seen(Store.make_key(i.source, i.unique_id))
                and not store.is_url_seen(i.url)
                and not is_stale(i)
-               and not prefilter.is_offtopic(i)]
+               and not prefilter.is_offtopic(i)
+               and not prefilter.is_price_story(i)]
     # ── 요약 순번(우선순위) ──
     # 무료 한도가 빡빡해 한 번에 몇 건밖에 못 돌린다. 그래서 **이 순서가 곧
     # 채널에 나가는 내용**이 된다. 발행 순서(과거→최신, RULES 1)와는 다른 얘기다.
@@ -397,9 +398,11 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         # 손대지 않는다. '본 것'으로 찍어버리면 발행되지 않은 채 영영 사라진다.
         # 오래된 기사는 해당 없다 — 그건 아래에서 기록하고 버리는 게 맞다.
         outdated = is_stale(item)
-        # 종합지에서 온 크립토 무관 기사. 요약하지 않고 '본 것'으로만 기록한다
-        # (아래에서 mark_seen 되므로 다음 실행에 다시 잡히지 않는다).
-        offtopic = prefilter.is_offtopic(item)
+        # 요약하지 않고 '본 것'으로만 기록하는 것들. 모델을 부르지 않는다.
+        #   종합지에서 온 크립토 무관 기사
+        #   가격·시황 기사 — 이 채널의 주제가 아닌데 요약 한도를 먹는다
+        #     (실측 2026-09-03: 발행 78건에 요약 호출 500건이 나가 한도를 소진했다)
+        offtopic = prefilter.is_offtopic(item) or prefilter.is_price_story(item)
         if budget and not warm and not outdated and not offtopic and key not in summaries:
             deferred += 1
             continue
@@ -502,7 +505,7 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
     if dup:
         print(f"[집계] 다른 피드로 이미 처리한 같은 기사 {dup}건 제외")
     if dropped:
-        print(f"[집계] 종합지에서 온 크립토 무관 기사 {dropped}건 제외 (요약 안 함)")
+        print(f"[집계] 요약 전에 걸러낸 기사(무관·가격) {dropped}건 제외 (요약 안 함)")
     if covered:
         print(f"[집계] 이미 발행한 글에 내용이 다 들어 있어 제외 {covered}건")
 
