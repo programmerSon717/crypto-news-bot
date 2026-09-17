@@ -21,7 +21,9 @@ from prompts import (
     BRIEFING_SYSTEM_PROMPT,
     INSIGHT_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
+    TERM_FIX_SYSTEM_PROMPT,
     build_insight_prompt,
+    build_term_fix_prompt,
     build_user_prompt,
 )
 
@@ -267,6 +269,25 @@ async def generate_json(system_prompt: str, user_prompt: str,
     return None
 
 
+async def translate_terms(tokens: list[str]) -> dict[str, str] | None:
+    """한국어로 안 옮겨진 조각들만 받아 한국어 표기를 돌려준다.
+
+    None 은 **물어보지도 못했다**는 뜻이다(한도 소진·호출 실패). 빈 dict 는
+    물어봤는데 고칠 것이 없다는 뜻이라 호출하는 쪽이 둘을 구분해야 한다.
+    조각만 주고받으므로 토큰이 거의 들지 않는다 — 호출 수만 1 늘어난다.
+    """
+    if not tokens:
+        return {}
+    data = await generate_json(TERM_FIX_SYSTEM_PROMPT,
+                               build_term_fix_prompt(tokens[:40]), max_tokens=800)
+    if not data:
+        return None
+    terms = data.get("terms")
+    if not isinstance(terms, dict):
+        return None
+    return {str(k): str(v) for k, v in terms.items() if k and v}
+
+
 async def summarize_insight(item: NewsItem, posted_at: str) -> dict | None:
     """퍼온 글을 분석 인사이트 JSON으로 만든다.
 
@@ -361,9 +382,14 @@ async def summarize_briefing(item: NewsItem) -> dict | None:
                 last_err = e
                 msg = str(e)
                 if _is_quota_exhausted(msg):
-                    if model not in _exhausted:
-                        _exhausted.add(model)
-                        print(f"[모델] {model} 일일 한도 소진 — 이번 실행에서 제외")
+                    # _exhausted 는 dict 다. 예전 코드가 set 시절의 .add() 를
+                    # 그대로 두고 있어서 여기 오면 AttributeError 로 터졌다 —
+                    # 심층 요약(FOMC·연준 연설)이 한도에 걸리면 재시도도 못 하고
+                    # '요약 실패'로 버려졌다.
+                    if _exhausted.get(model, 0) <= time.monotonic():
+                        wait = max(_retry_after(msg), 60)
+                        _rest(model, wait)
+                        print(f"[모델] {model} 한도 — {wait/60:.0f}분 쉬었다 다시 시도")
                     break
                 if _retryable(e, msg):
                     delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \

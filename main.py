@@ -34,6 +34,7 @@ import publisher
 from publisher import publish
 from store import Store, normalize_url
 import summarizer
+import lang
 from summarizer import summarize, summarize_briefing, summarize_insight
 
 store = Store(settings.db_path)
@@ -265,14 +266,21 @@ async def _summarize_one(item: NewsItem, recent: list | None = None) -> dict | N
     """항목 1건을 알맞은 경로로 요약한다."""
     if item.deep:
         # 최상위 정책 이벤트(FOMC·연준 연설)는 bullet 10~16개짜리 심층 요약으로.
-        return await summarize_briefing(item)
-    if is_repost(item):
+        data = await summarize_briefing(item)
+    elif is_repost(item):
         posted = (
             datetime.fromtimestamp(item.published_at, KST).strftime("%Y-%m-%d %H:%M")
             if item.published_at else "불명"
         )
-        return await summarize_insight(item, posted)
-    return await summarize(item, recent)
+        data = await summarize_insight(item, posted)
+    else:
+        data = await summarize(item, recent)
+    # 일본어·중국어 기사가 반쯤만 옮겨져 나가는 일이 잦다(`아바ランチ`, `무期限`).
+    # 프롬프트로는 계속 새서 country.enforce() 처럼 코드로 한 번 더 강제한다.
+    if data and not await lang.ensure(data):
+        print(f"[skip] 한국어 표기 보정 실패: {item.title[:50]}")
+        return None
+    return data
 
 
 async def _summarize_ahead(items: list[NewsItem],

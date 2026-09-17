@@ -262,6 +262,7 @@ crypto-news-bot/
 ├── urgent.py                   # 긴급 레인(지표·FOMC·잭슨홀) 5분 주기
 ├── topics.py                   # 탭 생성/캐시/조회
 ├── country.py                  # 나라 오분류를 코드로 강제 보정
+├── lang.py                     # 가나·한자가 남은 출력을 발행 전에 한국어로 강제
 ├── digest.py                   # 시간별 다이제스트 + 총괄 브리핑
 ├── purge.py / resort.py / reroute.py   # 정리·재정렬·재분류 도구
 ├── collectors/
