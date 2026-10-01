@@ -49,14 +49,19 @@ API = f"https://api.telegram.org/bot{settings.telegram_bot_token}"
 KEEP_OPEN: set[str] = set()
 
 # 자료검색 탭에 고정해 둘 안내문. 닫힌 탭에도 봇(관리자)은 쓸 수 있다.
-GUIDE = (
-    "🔍 <b>자료검색 쓰는 법</b>\n\n"
-    "검색은 <b>봇과 1:1 대화</b>에서만 됩니다.\n"
-    "여기서 주고받으면 누가 무엇을 찾아봤는지 모두에게 보이기 때문입니다.\n\n"
-    "① 위 봇 이름을 눌러 대화창을 엽니다 (처음 한 번 '시작')\n"
-    "② 그냥 물어보세요 — 예: <code>체인링크 요번에 업뎃된거 뭐임?</code>\n\n"
-    "발행된 기사에서 찾아 요약과 원문 링크를 보내 드립니다."
-)
+def _guide() -> str:
+    name = (settings.assistant_bot_username or "").lstrip("@")
+    where = (f'<a href="https://t.me/{name}">@{name}</a>' if name
+             else "검색 봇")
+    return (
+        "🔍 <b>자료검색 쓰는 법</b>\n\n"
+        f"검색은 {where} 와의 <b>1:1 대화</b>에서만 됩니다.\n"
+        "여기서 주고받으면 누가 무엇을 찾아봤는지 모두에게 보이기 때문입니다.\n\n"
+        f"① {where} 대화창을 엽니다 (처음 한 번 '시작')\n"
+        "② 그냥 물어보세요 — 예: <code>체인링크 요번에 업뎃된거 뭐임?</code>\n\n"
+        "발행된 기사에서 찾아 요약과 원문 링크를 보내 드립니다.\n"
+        "<i>주고받은 내용은 본인만 볼 수 있습니다.</i>"
+    )
 
 # 이미 원하는 상태일 때 텔레그램이 돌려주는 설명들. 실패로 보지 않는다.
 _ALREADY = ("TOPIC_CLOSED", "TOPIC_NOT_MODIFIED", "already", "TOPIC_ID_INVALID")
@@ -162,7 +167,7 @@ async def run(unlock: bool, dry_run: bool) -> None:
         if guide_tid and not unlock and not dry_run:
             r = await client.post(f"{API}/sendMessage", json={
                 "chat_id": settings.telegram_channel_id,
-                "message_thread_id": guide_tid, "text": GUIDE,
+                "message_thread_id": guide_tid, "text": _guide(),
                 "parse_mode": "HTML",
                 "link_preview_options": {"is_disabled": True}}, timeout=20)
             body = r.json()

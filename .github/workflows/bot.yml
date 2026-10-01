@@ -75,6 +75,9 @@ jobs:
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.1-flash-lite' }}
           # 자료검색 탭 전용 키. 비어 있으면 위 키를 함께 쓴다(발행 한도를 깎는다).
           GEMINI_SEARCH_API_KEY: ${{ secrets.GEMINI_SEARCH_API_KEY }}
+          # 자료검색 전용 봇. 비우면 발행 봇을 그대로 쓴다.
+          ASSISTANT_BOT_TOKEN: ${{ secrets.ASSISTANT_BOT_TOKEN }}
+          ASSISTANT_BOT_USERNAME: ${{ vars.ASSISTANT_BOT_USERNAME }}
           # 3 이 기본이다. 4로 올리면 토큰화 주식 거래량·온체인 출금 같은
           # 진짜 시장 뉴스까지 잘린다(실측: 유효 20건 중 발행 가능 1건).
           # 범위는 중요도가 아니라 주제로 가른다 — prompts 의 '크립토 관련성' 절.

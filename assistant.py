@@ -75,6 +75,21 @@ from prompts import ANSWER_SYSTEM_PROMPT, build_answer_prompt
 
 TOPIC_NAME = "자료검색"
 
+
+def _bot_token() -> str:
+    """질문을 받고 답할 봇. 따로 지정이 없으면 발행 봇을 그대로 쓴다."""
+    return settings.assistant_bot_token or settings.telegram_bot_token
+
+
+def _api(method: str, token: str | None = None) -> str:
+    return f"https://api.telegram.org/bot{token or _bot_token()}/{method}"
+
+
+def _bot_id(token: str) -> str:
+    """토큰 앞부분이 봇 id 다. 수신 위치(offset)를 봇별로 따로 기억하기 위해 쓴다 —
+    봇을 바꾸면 update_id 체계가 달라서 이전 offset 을 쓰면 안 된다."""
+    return (token or "").split(":", 1)[0] or "0"
+
 # 모델에게 보여 줄 후보 수. 늘려도 정확도가 오르지 않고 토큰만 든다.
 CANDIDATES = int(os.getenv("ANSWER_CANDIDATES", "6"))
 # 답에 함께 붙일 원본 글 최대 개수.
@@ -200,8 +215,8 @@ async def _is_member(client: httpx.AsyncClient, user_id: int) -> bool:
     hit = _member_cache.get(user_id)
     if hit and time.time() - hit[0] < MEMBER_TTL:
         return hit[1]
-    url = (f"https://api.telegram.org/bot{settings.telegram_bot_token}"
-           f"/getChatMember")
+    # 검색 봇은 그룹에 없을 수 있으므로 **발행 봇** 토큰으로 묻는다.
+    url = _api("getChatMember", settings.telegram_bot_token)
     try:
         r = await client.get(url, params={"chat_id": settings.telegram_channel_id,
                                           "user_id": user_id}, timeout=20)
@@ -213,8 +228,16 @@ async def _is_member(client: httpx.AsyncClient, user_id: int) -> bool:
     return ok
 
 
+def guide_line() -> str:
+    """사람에게 '어디로 물어보라'고 알려줄 한 줄."""
+    name = settings.assistant_bot_username.lstrip("@")
+    return (f"👉 @{name} 대화창을 열고 물어보세요 (처음 한 번 '시작')"
+            if name else "저와의 대화창을 열고 같은 질문을 보내 주세요.")
+
+
 async def _send(client: httpx.AsyncClient, chat_id, text: str,
-                thread_id: int | None = None, reply_to: int | None = None):
+                thread_id: int | None = None, reply_to: int | None = None,
+                token: str | None = None):
     """임의의 대화로 보낸다. publisher.send_raw 는 뉴스 그룹 전용이라 따로 둔다."""
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML",
                "link_preview_options": {"is_disabled": True}}
@@ -222,7 +245,7 @@ async def _send(client: httpx.AsyncClient, chat_id, text: str,
         payload["message_thread_id"] = thread_id
     if reply_to:
         payload["reply_parameters"] = {"message_id": reply_to}
-    url = (f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage")
+    url = _api("sendMessage", token)
     try:
         r = await client.post(url, json=payload, timeout=30)
         if r.status_code != 200:
@@ -232,8 +255,7 @@ async def _send(client: httpx.AsyncClient, chat_id, text: str,
 
 
 async def _get_updates(client: httpx.AsyncClient, offset: int) -> list[dict]:
-    url = (f"https://api.telegram.org/bot{settings.telegram_bot_token}"
-           f"/getUpdates")
+    url = _api("getUpdates")
     try:
         r = await client.post(url, json={
             "offset": offset, "timeout": POLL_TIMEOUT, "limit": 20,
@@ -283,7 +305,10 @@ async def run(client: httpx.AsyncClient, store, seconds: int = 240,
     거기서 답하면 누가 무엇을 찾아봤는지 모두에게 보인다(모듈 설명 참고).
     """
     tid = thread_id()
-    offset = int(store.kv_get("answer_offset", "0") or 0)
+    # 수신 위치는 **봇별로** 기억한다. 봇을 바꾸면 update_id 체계가 달라
+    # 이전 봇의 offset 을 쓰면 새 질문을 통째로 건너뛴다.
+    okey = f"answer_offset:{_bot_id(_bot_token())}"
+    offset = int(store.kv_get(okey, "0") or 0)
     deadline = time.monotonic() + seconds
     answered = 0
     nudged = 0
@@ -308,8 +333,9 @@ async def run(client: httpx.AsyncClient, store, seconds: int = 240,
                     await _send(client, msg["chat"]["id"],
                                 "🔒 검색 결과는 <b>1:1 대화</b>로만 보내 드립니다.\n"
                                 "여기서 답하면 다른 분들께도 보이기 때문입니다.\n\n"
-                                "저와의 대화창을 열고 같은 질문을 보내 주세요.",
-                                thread_id=tid, reply_to=msg.get("message_id"))
+                                + guide_line(),
+                                thread_id=tid, reply_to=msg.get("message_id"),
+                                token=settings.telegram_bot_token)
                 continue
 
             # ── 1:1 ──
@@ -330,7 +356,7 @@ async def run(client: httpx.AsyncClient, store, seconds: int = 240,
             answered += 1
         # offset 은 **답한 뒤** 저장한다. 중간에 죽으면 같은 질문을 다시 받는다 —
         # 답을 빼먹는 것보다 두 번 답하는 쪽이 낫다.
-        store.kv_set("answer_offset", str(offset))
+        store.kv_set(okey, str(offset))
 
     if answered or nudged:
         print(f"[자료검색] 1:1 답변 {answered}건 · 그룹 안내 {nudged}건 "
