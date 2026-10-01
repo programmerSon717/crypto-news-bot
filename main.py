@@ -585,6 +585,10 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         print(f"[집계] 이미 발행한 글에 내용이 다 들어 있어 제외 {covered}건 (모델 판정)")
     if same_event:
         print(f"[집계] 같은 사건이 이미 나가 제외 {same_event}건 (코드 판정)")
+    audited = prefilter.flush_audit()
+    if audited:
+        print(f"[집계] 프리필터 감사 {audited}건 기록 "
+              f"({prefilter.AUDIT_FILE}) — 아직 막지 않음")
 
 
 async def recent_tg_web(client: httpx.AsyncClient, hours: int = 6) -> list[NewsItem]:

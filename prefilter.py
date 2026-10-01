@@ -12,8 +12,10 @@ Vietnam News 등). 그 나라 규제·시장 소식을 놓치지 않으려고 �
 제목에 낱말이 안 보여도 본문은 크립토인 경우가 많다. 모르는 소스도 전문지로 취급한다
 — 실수로 진짜 크립토 뉴스를 버리는 쪽이 한도를 낭비하는 것보다 나쁘다.
 """
+import json
 import os
 import re
+import time
 
 # 크립토가 주제가 아닌 매체. 여기서 온 기사만 낱말 검사를 받는다.
 GENERAL_SOURCES = {
@@ -43,6 +45,12 @@ GENERAL_SOURCES = {
 # PREFILTER_AUDIT_ONLY=0 으로 실제 차단을 켠다. 추측으로 뉴스를 버리지 않는다.
 CANDIDATE_SOURCES = {"토큰포스트", "PANews"}
 AUDIT_ONLY = os.getenv("PREFILTER_AUDIT_ONLY", "1") == "1"
+
+# 감사 기록을 남길 파일. docs/ 는 워크플로가 매 회차 커밋하므로 기록이 보존된다
+# (Actions 로그는 90일 뒤 사라지고 내려받아 분석하기도 번거롭다).
+AUDIT_FILE = os.getenv("PREFILTER_AUDIT_FILE", "docs/prefilter_audit.jsonl")
+AUDIT_KEEP = 4000          # 파일이 무한히 자라지 않게 최근 N줄만 남긴다
+_audit: list[dict] = []
 
 # 크립토·디지털자산 낱말. 소스가 여러 언어라 한국어·영어·중국어·일본어를 함께 본다.
 CRYPTO_PAT = re.compile(
@@ -163,6 +171,34 @@ def is_offtopic(item) -> bool:
 
     if candidate and offtopic and AUDIT_ONLY:
         # 아직 막지 않는다. 하루치를 모아 보고 켤지 정한다(CANDIDATE_SOURCES 주석).
+        _audit.append({"t": int(time.time()), "source": item.source,
+                       "title": (item.title or "")[:160],
+                       "url": (item.url or "")[:200]})
         print(f"[프리필터감사] 막혔을 것: [{item.source}] {(item.title or '')[:62]}")
         return False
     return offtopic
+
+
+def flush_audit() -> int:
+    """모아둔 감사 기록을 파일에 덧붙인다. 폴링 1회가 끝날 때 부른다.
+
+    실패해도 조용히 넘어간다 — 감사 기록 때문에 발행이 멈추면 안 된다.
+    """
+    global _audit
+    if not _audit:
+        return 0
+    n = len(_audit)
+    try:
+        os.makedirs(os.path.dirname(AUDIT_FILE) or ".", exist_ok=True)
+        lines = []
+        if os.path.exists(AUDIT_FILE):
+            with open(AUDIT_FILE, encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        lines += [json.dumps(r, ensure_ascii=False) for r in _audit]
+        with open(AUDIT_FILE, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines[-AUDIT_KEEP:]) + "\n")
+    except OSError as exc:
+        print(f"[프리필터감사] 기록 실패(무시): {exc}")
+    finally:
+        _audit = []
+    return n

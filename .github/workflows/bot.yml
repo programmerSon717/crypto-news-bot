@@ -83,6 +83,11 @@ jobs:
           # 과거 기사는 끌어오지 않는다 — 최신만 발행
           MAX_AGE_HOURS: ${{ vars.MAX_AGE_HOURS || '12' }}
           USE_TOPICS: "true"
+          # 토큰포스트·PANews 의 비크립토 기사를 실제로 막을지.
+          # 1(기본) = 기록만 하고 통과시킨다. docs/prefilter_audit.jsonl 에 쌓인다.
+          # 0 으로 바꾸면 실제로 막는다 — **로그를 확인한 뒤에** 바꿀 것.
+          # (저장소 Settings > Secrets and variables > Actions > Variables)
+          PREFILTER_AUDIT_ONLY: ${{ vars.PREFILTER_AUDIT_ONLY || '1' }}
 
           # 폴링 1회에 쓸 수 있는 시간 상한(초). 이 값이 1회 요약 상한을 정한다
           # (요약에 60%를 쓰고, 12건/분 스로틀이라 120*0.6/5 = 14건).
