@@ -1,5 +1,7 @@
 """요약·코멘트 생성용 프롬프트. 채널 스타일을 여기서 전부 제어한다."""
 
+import glossary
+
 SYSTEM_PROMPT = """당신은 크립토/블록체인 뉴스를 큐레이션하는 한국어 텔레그램 채널의 편집자입니다.
 주어진 뉴스를 아래 채널 스타일에 맞게 가공하여 JSON으로만 응답하세요. JSON 외 다른 텍스트, 마크다운 백틱을 절대 포함하지 마세요.
 
@@ -555,13 +557,16 @@ def build_recent_block(recent: list) -> str:
 
 def build_user_prompt(source: str, title: str, url: str, body: str, region_hint: str,
                       recent: list | None = None) -> str:
+    # 고유명사 표기 사전은 **원문에 그 이름이 보일 때만** 붙는다(glossary 참고).
+    # 사전 전체를 매번 실으면 호출당 토큰이 그만큼 늘어 무료 한도를 깎는다.
     return f"""다음 뉴스를 처리하세요.
 
 수집처: {source}
 지역 힌트: {region_hint or "불명"}
 제목: {title}
 URL: {url}
-본문/요약: {body or "(본문 없음 — 제목 기반으로만 판단)"}{build_recent_block(recent or [])}"""
+본문/요약: {body or "(본문 없음 — 제목 기반으로만 판단)"}\
+{glossary.prompt_block(title, body)}{build_recent_block(recent or [])}"""
 
 
 # ── 낱말 단위 재번역 ────────────────────────────────────────────────

@@ -28,6 +28,8 @@ from collectors import (binance, bithumb, upbit, rss, telegram_channels, tg_web,
                         regulation)
 import country
 from config import settings
+import eventdup
+import glossary
 from models import NewsItem
 import prefilter
 import publisher
@@ -257,6 +259,39 @@ SUMMARY_CONCURRENCY = int(os.getenv("SUMMARY_CONCURRENCY", "6"))
 # 요약이 예산을 전부 먹으면 발행 루프가 통째로 밀려, 애써 요약한 결과를 버리게 된다.
 SUMMARIZE_BUDGET_RATIO = 0.6
 
+# 모델에게 "이미 이런 게 나갔다"고 보여 줄 발행 이력 개수.
+#
+# 10 이었다. 하루 300건(시간당 12건)을 내보내는 채널에서 10건은 **한 회차도
+# 못 덮는다** — 회당 최대 18건을 발행하므로, 모델은 바로 앞 회차에 나간 글조차
+# 못 보고 판정했다. 그래서 같은 사건이 회차를 건너뛰며 계속 새로 나갔다
+# (실측 2026-09-28: CCIP 2.0 발표 한 건이 여섯 번).
+#
+# 120 이면 12시간 창을 거의 다 덮는다. 헤드라인과 리드만 보내므로
+# (store.recent_for_dedup) 호출당 늘어나는 토큰은 2천 안쪽이다.
+DEDUP_RECENT = int(os.getenv("DEDUP_RECENT", "120"))
+
+# 코드 중복 판정에 쓸 발행 이력 창. 모델 쪽(12시간)보다 넓게 본다 —
+# 비용이 들지 않고, 하루 넘게 같은 사건이 되돌아오는 일이 실제로 있다.
+DEDUP_CODE_HOURS = int(os.getenv("DEDUP_CODE_HOURS", "36"))
+DEDUP_CODE_LIMIT = int(os.getenv("DEDUP_CODE_LIMIT", "500"))
+
+_corpus_loaded = False
+
+
+def _ensure_corpus() -> None:
+    """낱말 희귀도(IDF)를 발행 이력으로 한 번만 학습한다.
+
+    `eventdup` 은 흔한 말이 아니라 **드문 말이 겹치는지**로 같은 사건을 가린다.
+    그 희귀도를 이 봇이 실제로 써 온 헤드라인에서 센다 — 외부 사전이 필요 없고,
+    새 고유명사가 들어오면 자동으로 가장 무거워진다.
+    """
+    global _corpus_loaded
+    if _corpus_loaded:
+        return
+    n = eventdup.set_corpus(store.all_headlines())
+    _corpus_loaded = True
+    print(f"[중복] 발행 이력 {n:,}건으로 낱말 희귀도 학습")
+
 # 예산 초과·모델 소진으로 **손도 대지 않은** 항목. '요약 실패'(None)와 구분해야 한다.
 # 실패는 '본 것'으로 찍고 넘어가지만, 이건 다음 실행이 다시 잡아야 한다.
 SKIPPED = object()
@@ -280,6 +315,11 @@ async def _summarize_one(item: NewsItem, recent: list | None = None) -> dict | N
     if data and not await lang.ensure(data):
         print(f"[skip] 한국어 표기 보정 실패: {item.title[:50]}")
         return None
+    # 고유명사 표기를 표준으로 맞춘다. 프롬프트에도 사전을 얹지만(권고),
+    # 모델이 새 음차를 만들어 오는 일이 계속 있어 여기서 강제한다.
+    # 같은 사건이 매번 다른 이름으로 나가면 중복 판정과 검색이 함께 깨진다.
+    if data:
+        glossary.apply(data)
     return data
 
 
@@ -324,9 +364,21 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
     dup = 0
     dropped = 0
     covered = 0
+    same_event = 0
 
     ordered = publish_order(dedupe_items(items))
     stale = 0
+
+    # ── 코드 중복 판정에 쓸 발행 이력 ──
+    # 모델 쪽 판정(요약 호출에 얹는 `recent`)과 **겹치는 게 아니라 보완한다.**
+    # 모델은 요약 '전에' 읽은 목록만 보므로, 같은 회차에 들어온 형제 기사끼리는
+    # 서로를 못 본다. 이 목록은 아래 루프에서 발행할 때마다 자라므로 그걸 잡는다.
+    # (eventdup 모듈 설명 참고)
+    _ensure_corpus()
+    dedup_heads = [h for cat, h in
+                   store.recent_headlines(hours=DEDUP_CODE_HOURS,
+                                          limit=DEDUP_CODE_LIMIT)
+                   if not eventdup.skip(cat)]
 
     # 아직 안 본 것만 추려 미리 요약해둔다(순서 유지). 오래된 건 요약도 하지 않는다.
     # URL 중복도 여기서 걸러야 한다. 발행 루프에서만 막으면 이미 요약이 끝난 뒤라
@@ -364,7 +416,7 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         print(f"[요약] {len(pending)}건 병렬 처리 시작 (동시 {SUMMARY_CONCURRENCY})")
         deadline = (started + budget * SUMMARIZE_BUDGET_RATIO) if budget else None
         # 이미 발행한 글 목록. 모델이 "이거 이미 나갔다"를 판정하는 근거다.
-        recent = store.recent_for_dedup(hours=12, limit=10)
+        recent = store.recent_for_dedup(hours=12, limit=DEDUP_RECENT)
         t0 = time.monotonic()
         results = await _summarize_ahead(pending, deadline, recent)
         took = time.monotonic() - t0
@@ -460,6 +512,18 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         if item.force_category and cat != item.force_category:
             print(f"[탭지정] {cat} → {item.force_category}: {item.title[:45]}")
             cat = item.force_category
+        # ── 같은 사건이 이미 나갔는가(코드 판정) ──
+        # 모델이 '새 글'로 본 것도 여기서 한 번 더 본다. 모델은 못 본 것을
+        # 판정할 수 없고(형제 기사·좁은 이력 창), 이쪽은 공짜다.
+        headline = (data.get("headline") or "").strip()
+        if headline and not eventdup.skip(cat):
+            hit = eventdup.find_covered(headline, dedup_heads)
+            if hit:
+                same_event += 1
+                print(f"[skip] 같은 사건({hit[1]:.2f}): {headline[:44]}")
+                print(f"       이미 발행 → {hit[0][:44]}")
+                continue
+
         if cat in MARKET_TABS and is_repost(item):
             # 금리·증시 탭은 객관성이 중요해 언론 보도만 싣는다.
             # 개인 커뮤니티에서 퍼온 시황 코멘트는 근거를 확인할 수 없어 제외.
@@ -476,6 +540,9 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         msg_id = await publish(client, data, item.url,
                                image_url=item.image_url, image=item.image)
         if msg_id:
+            # 이번 회차의 형제 기사가 이걸 보고 걸러질 수 있도록 바로 쌓는다.
+            if headline and not eventdup.skip(cat):
+                dedup_heads.append(headline)
             _, origin = publisher.origin_of(data)
             ids = [i for i in data.get("_message_ids", []) if i != msg_id]
 
@@ -515,7 +582,9 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
     if dropped:
         print(f"[집계] 요약 전에 걸러낸 기사(무관·가격) {dropped}건 제외 (요약 안 함)")
     if covered:
-        print(f"[집계] 이미 발행한 글에 내용이 다 들어 있어 제외 {covered}건")
+        print(f"[집계] 이미 발행한 글에 내용이 다 들어 있어 제외 {covered}건 (모델 판정)")
+    if same_event:
+        print(f"[집계] 같은 사건이 이미 나가 제외 {same_event}건 (코드 판정)")
 
 
 async def recent_tg_web(client: httpx.AsyncClient, hours: int = 6) -> list[NewsItem]:

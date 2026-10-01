@@ -258,6 +258,32 @@ class Store:
             })
         return out
 
+    def recent_headlines(self, hours: int = 24, limit: int = 400) -> list[tuple[str, str]]:
+        """(탭, 헤드라인) 최근 발행 목록. 코드 중복 판정(`eventdup`)에 쓴다.
+
+        `recent_for_dedup` 과 쓰임이 다르다 — 저쪽은 모델에게 보여 줄 목록이라
+        리드·시각까지 담고 개수를 아껴야 하지만, 이쪽은 코드가 보는 것이라
+        헤드라인만 있으면 되고 수백 건을 넣어도 비용이 없다.
+        """
+        since = time.time() - hours * 3600
+        with self._conn() as c:
+            rows = c.execute(
+                """SELECT category, headline FROM published
+                   WHERE published_at >= ? AND headline IS NOT NULL
+                   ORDER BY published_at DESC LIMIT ?""",
+                (since, limit),
+            ).fetchall()
+        return [(r[0] or "", r[1]) for r in rows]
+
+    def all_headlines(self, limit: int = 30000) -> list[str]:
+        """발행한 모든 헤드라인. 낱말 희귀도(IDF) 학습용."""
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT headline FROM published WHERE headline IS NOT NULL "
+                "ORDER BY published_at DESC LIMIT ?", (limit,),
+            ).fetchall()
+        return [r[0] for r in rows]
+
     def digest_done(self, scope: str, window_end: float) -> bool:
         with self._conn() as c:
             row = c.execute(
