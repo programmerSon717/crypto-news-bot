@@ -54,8 +54,13 @@ _gate = asyncio.Lock()
 _last_call: dict[str, float] = {}
 
 
-async def _throttle(model: str):
-    """그 **모델의** 직전 호출과 간격을 벌린다."""
+async def _throttle(model: str, kind: str = "기타"):
+    """그 **모델의** 직전 호출과 간격을 벌린다.
+
+    실제 API 호출 직전에 반드시 한 번 불리는 유일한 지점이라, 호출 수 집계도
+    여기서 한다(`_count`). 세는 곳을 한 곳으로 모아야 빠뜨리지 않는다.
+    """
+    _count(model, kind)
     async with _gate:
         now = asyncio.get_running_loop().time()
         wait = _MIN_GAP - (now - _last_call.get(model, 0.0))
@@ -88,6 +93,29 @@ def _rotate(models: list[str]) -> list[str]:
 # 일정 시간 쉬었다가 다시 써본다.
 COOLDOWN_SEC = int(os.getenv("MODEL_COOLDOWN_SEC", "900"))   # 15분
 _exhausted: dict[str, float] = {}
+
+
+# ── 실제 API 호출 수 세기 ────────────────────────────────────
+#
+# **추정으로는 두 번 틀렸다.** 요약 호출만 세면 하루 764회인데 한도 합계는
+# 1,080회다. 그런데 실제로는 6개 통이 전부 소진된다 — 240회 넘게 어딘가에서
+# 더 나간다는 뜻이다. 긴급 레인(5분마다), 재번역(translate_terms), 재시도,
+# 비전 호출 중 무엇이 얼마인지 **세어 보지 않고는 알 수 없다.**
+#
+# 그래서 호출 직전마다 (모델, 종류)로 1씩 올린다. main 이 폴링 끝에 DB로 옮긴다.
+_calls: dict[str, int] = {}
+
+
+def _count(model: str, kind: str) -> None:
+    key = f"{model}|{kind}"
+    _calls[key] = _calls.get(key, 0) + 1
+
+
+def drain_calls() -> dict[str, int]:
+    """모아둔 호출 수를 넘기고 비운다."""
+    global _calls
+    out, _calls = _calls, {}
+    return out
 
 
 def _rest(model: str, seconds: float | None = None):
@@ -129,6 +157,16 @@ def all_exhausted() -> bool:
     다음 실행에 넘길 수 있게 하려고 공개해 둔다.
     """
     return not _usable(_candidates())
+
+
+# 하루 한도(PerDay)에 걸렸을 때 쉬는 시간.
+#
+# 예전에는 응답의 retryDelay 를 그대로 썼는데(최대 90초), **하루 한도는 90초 뒤에
+# 풀리지 않는다.** 다음 리셋(태평양 자정 = KST 16시)까지 가야 풀린다. 그래서 소진된
+# 뒤에도 6개 모델을 90초마다 계속 두드렸다. 거부된 요청이라 한도를 더 먹지는
+# 않지만, all_exhausted() 가 계속 False 를 돌려줘 **봇이 '다음 실행으로 미루기'를
+# 못 하고 헛돌았다**(주석 118~120 의 '40분 걸려 타임아웃' 이 이 증상이다).
+DAILY_COOLDOWN_SEC = int(os.getenv("MODEL_DAILY_COOLDOWN_SEC", "3600"))
 
 
 def _retry_after(msg: str) -> float:
@@ -256,7 +294,7 @@ async def generate_json(system_prompt: str, user_prompt: str,
     for model in models:
         for attempt in range(3):
             try:
-                await _throttle(model)
+                await _throttle(model, "json")
                 return _extract_json(
                     await asyncio.wait_for(asyncio.to_thread(_call, model), CALL_TIMEOUT)
                 )
@@ -266,9 +304,10 @@ async def generate_json(system_prompt: str, user_prompt: str,
                 if _is_quota_exhausted(msg):
                     # 한도에 걸렸다. 응답이 알려준 재시도 시각이 있으면 그만큼만 쉰다.
                     if _exhausted.get(model, 0) <= time.monotonic():
-                        wait = max(_retry_after(msg), 60)
+                        wait = DAILY_COOLDOWN_SEC
                         _rest(model, wait)
-                        print(f"[모델] {model} 한도 — {wait/60:.0f}분 쉬었다 다시 시도")
+                        print(f"[모델] {model} 하루 한도 소진 — "
+                              f"{wait/60:.0f}분 쉰다(리셋은 KST 16시)")
                     break
                 if _retryable(e, msg):
                     delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \
@@ -317,7 +356,7 @@ async def summarize_insight(item: NewsItem, posted_at: str) -> dict | None:
     for model in models:
         for attempt in range(3):
             try:
-                await _throttle(model)
+                await _throttle(model, "insight")
                 text = await asyncio.wait_for(
                     asyncio.to_thread(_generate_vision_sync, model, user_prompt,
                                       item.image, item.image_mime),
@@ -334,9 +373,10 @@ async def summarize_insight(item: NewsItem, posted_at: str) -> dict | None:
                 if _is_quota_exhausted(msg):
                     # 한도에 걸렸다. 응답이 알려준 재시도 시각이 있으면 그만큼만 쉰다.
                     if _exhausted.get(model, 0) <= time.monotonic():
-                        wait = max(_retry_after(msg), 60)
+                        wait = DAILY_COOLDOWN_SEC
                         _rest(model, wait)
-                        print(f"[모델] {model} 한도 — {wait/60:.0f}분 쉬었다 다시 시도")
+                        print(f"[모델] {model} 하루 한도 소진 — "
+                              f"{wait/60:.0f}분 쉰다(리셋은 KST 16시)")
                     break
                 if _retryable(e, msg):
                     delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \
@@ -381,7 +421,7 @@ async def summarize_briefing(item: NewsItem) -> dict | None:
     for model in models:
         for attempt in range(3):
             try:
-                await _throttle(model)
+                await _throttle(model, "briefing")
                 text = await asyncio.wait_for(
                     asyncio.to_thread(_generate_briefing_sync, model, user_prompt),
                     CALL_TIMEOUT,
@@ -399,9 +439,10 @@ async def summarize_briefing(item: NewsItem) -> dict | None:
                     # 심층 요약(FOMC·연준 연설)이 한도에 걸리면 재시도도 못 하고
                     # '요약 실패'로 버려졌다.
                     if _exhausted.get(model, 0) <= time.monotonic():
-                        wait = max(_retry_after(msg), 60)
+                        wait = DAILY_COOLDOWN_SEC
                         _rest(model, wait)
-                        print(f"[모델] {model} 한도 — {wait/60:.0f}분 쉬었다 다시 시도")
+                        print(f"[모델] {model} 하루 한도 소진 — "
+                              f"{wait/60:.0f}분 쉰다(리셋은 KST 16시)")
                     break
                 if _retryable(e, msg):
                     delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \
@@ -430,7 +471,7 @@ async def summarize(item: NewsItem, recent: list | None = None) -> dict | None:
     for model in models:
         for attempt in range(3):
             try:
-                await _throttle(model)
+                await _throttle(model, "summary")
                 text = await asyncio.wait_for(
                     asyncio.to_thread(_generate_sync, model, user_prompt), CALL_TIMEOUT
                 )
@@ -445,9 +486,10 @@ async def summarize(item: NewsItem, recent: list | None = None) -> dict | None:
                 if _is_quota_exhausted(msg):
                     # 한도에 걸렸다. 응답이 알려준 재시도 시각이 있으면 그만큼만 쉰다.
                     if _exhausted.get(model, 0) <= time.monotonic():
-                        wait = max(_retry_after(msg), 60)
+                        wait = DAILY_COOLDOWN_SEC
                         _rest(model, wait)
-                        print(f"[모델] {model} 한도 — {wait/60:.0f}분 쉬었다 다시 시도")
+                        print(f"[모델] {model} 하루 한도 소진 — "
+                              f"{wait/60:.0f}분 쉰다(리셋은 KST 16시)")
                     break
                 if _retryable(e, msg):
                     delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \

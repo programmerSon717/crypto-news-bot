@@ -290,6 +290,19 @@ class Store:
             c.execute("INSERT INTO kv (k, v) VALUES (?,?) "
                       "ON CONFLICT(k) DO UPDATE SET v=excluded.v", (key, value))
 
+    def add_call_counts(self, day: str, counts: dict) -> dict:
+        """하루치 모델 호출 수를 누적한다. {"모델|종류": n} 꼴.
+
+        무료 한도가 왜 떨어지는지 **추정하지 않고 세기 위한** 기록이다
+        (summarizer._count 참고). 돌려주는 값은 누적 후의 전체.
+        """
+        import json as _json
+        cur = _json.loads(self.kv_get(f"calls:{day}", "{}") or "{}")
+        for k, v in (counts or {}).items():
+            cur[k] = cur.get(k, 0) + int(v)
+        self.kv_set(f"calls:{day}", _json.dumps(cur, ensure_ascii=False))
+        return cur
+
     def searchable(self, limit: int = 30000) -> list[tuple]:
         """자료검색 색인(`search.Index`)에 넣을 발행글.
 

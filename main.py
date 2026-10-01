@@ -585,6 +585,20 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         print(f"[집계] 이미 발행한 글에 내용이 다 들어 있어 제외 {covered}건 (모델 판정)")
     if same_event:
         print(f"[집계] 같은 사건이 이미 나가 제외 {same_event}건 (코드 판정)")
+    # 실제 API 호출 수를 날짜별로 누적한다. 한도는 KST 16시에 리셋되므로
+    # 그 경계로 '하루'를 센다 — 자정 기준으로 세면 두 한도일이 섞인다.
+    calls = summarizer.drain_calls()
+    if calls:
+        day = datetime.now(tz=KST).replace(minute=0, second=0, microsecond=0)
+        day = (day - timedelta(hours=16)).strftime("%Y-%m-%d")
+        tot = store.add_call_counts(day, calls)
+        by_kind: dict[str, int] = {}
+        for k, v in tot.items():
+            by_kind[k.split("|")[-1]] = by_kind.get(k.split("|")[-1], 0) + v
+        print(f"[한도] 오늘(16시 기준 {day}) 누적 호출 {sum(tot.values()):,}회 — "
+              + "  ".join(f"{k}:{v}" for k, v in sorted(by_kind.items(),
+                                                        key=lambda kv: -kv[1])))
+
     audited = prefilter.flush_audit()
     if audited:
         print(f"[집계] 프리필터 감사 {audited}건 기록 "
