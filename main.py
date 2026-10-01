@@ -365,6 +365,8 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
     dropped = 0
     covered = 0
     same_event = 0
+    irrelevant = 0        # 모델이 '크립토 무관'으로 판정하거나 요약에 실패
+    low_importance = 0    # 중요도 문턱 미달
 
     ordered = publish_order(dedupe_items(items))
     stale = 0
@@ -484,6 +486,7 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         # 미리 병렬로 돌려둔 결과를 쓴다. 없으면(단건 경로) 그 자리에서 처리.
         data = summaries[key] if key in summaries else await _summarize_one(item)
         if data is None:
+            irrelevant += 1
             print(f"[skip] 무관/실패: {item.title[:60]}")
             continue
         if data.get("duplicate"):
@@ -500,6 +503,7 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         exempt = item.force_category or cat_raw == "거래소이슈"
         floor = importance_floor(cat_raw)
         if not exempt and data.get("importance", 0) < floor:
+            low_importance += 1
             print(f"[skip] 중요도 {data.get('importance')}(문턱 {floor}): {item.title[:52]}")
             continue
 
@@ -587,17 +591,32 @@ async def process_items(client: httpx.AsyncClient, items: list[NewsItem], warm: 
         print(f"[집계] 같은 사건이 이미 나가 제외 {same_event}건 (코드 판정)")
     # 실제 API 호출 수를 날짜별로 누적한다. 한도는 KST 16시에 리셋되므로
     # 그 경계로 '하루'를 센다 — 자정 기준으로 세면 두 한도일이 섞인다.
+    # 요약을 **하고 나서** 버린 이유별 집계. 호출 수(calls)와 같은 자리에 쌓아야
+    # "하루 1,080회를 어디에 썼나"를 한 번에 볼 수 있다.
+    #   무관     모델이 크립토 뉴스가 아니라고 판정 — 수집 범위가 넓다는 뜻
+    #   중요도   문턱 미달 — 문턱이 높거나 소스가 잡음이 많다는 뜻
+    #   중복(모델)/중복(코드)  이미 나간 사건
+    # 이 넷이 요약 호출의 대부분을 먹는다. 무엇을 줄여야 하는지는 비율이 정한다.
+    waste = {"무관": irrelevant, "중요도": low_importance,
+             "중복(모델)": covered, "중복(코드)": same_event}
+    waste = {k: v for k, v in waste.items() if v}
+
     calls = summarizer.drain_calls()
-    if calls:
+    if calls or waste:
         day = datetime.now(tz=KST).replace(minute=0, second=0, microsecond=0)
         day = (day - timedelta(hours=16)).strftime("%Y-%m-%d")
         tot = store.add_call_counts(day, calls)
+        if waste:
+            store.add_call_counts(f"{day}|버림", waste)
         by_kind: dict[str, int] = {}
         for k, v in tot.items():
             by_kind[k.split("|")[-1]] = by_kind.get(k.split("|")[-1], 0) + v
         print(f"[한도] 오늘(16시 기준 {day}) 누적 호출 {sum(tot.values()):,}회 — "
               + "  ".join(f"{k}:{v}" for k, v in sorted(by_kind.items(),
                                                         key=lambda kv: -kv[1])))
+        if waste:
+            print("[한도] 이번 회차 요약 후 버림 — "
+                  + "  ".join(f"{k}:{v}" for k, v in waste.items()))
 
     audited = prefilter.flush_audit()
     if audited:
