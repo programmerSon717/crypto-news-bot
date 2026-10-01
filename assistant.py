@@ -1,4 +1,4 @@
-"""'자료검색' 탭 — 탭에 질문을 쓰면 발행 이력에서 찾아 답한다.
+"""자료검색 — 봇에게 1:1로 물으면 발행 이력에서 찾아 답한다.
 
     python main.py --answer                # 기본 240초 동안 질문을 받는다
     python main.py --answer --seconds 60
@@ -25,14 +25,30 @@
  · 한도가 소진된 날(`summarizer.all_exhausted`)도 검색 결과만 보낸다.
 즉 모델이 없어도 기능은 돌아간다. 답변 문장이 없어질 뿐이다.
 
+## 왜 그룹 탭이 아니라 1:1 대화인가
+
+처음엔 '자료검색' 토픽에서 주고받게 만들었다. 그런데 **텔레그램 그룹 토픽은
+구조적으로 전부 공개**다 — A가 무엇을 검색했는지 B·C가 그대로 보고, ALL 탭에도
+쌓인다. 토픽별로 사람마다 다른 화면을 보여줄 방법은 없다.
+
+그래서 질문은 **봇과의 1:1 대화에서만** 받고 거기로만 답한다. 그룹에는 아무것도
+남지 않는다. 그룹 탭에 질문을 쓰면 답하지 않고 "1:1로 물어보라"고만 알린다 —
+거기서 답하면 그 내용이 모두에게 보이기 때문이다.
+
+대가가 하나 있다. **텔레그램은 봇이 먼저 말을 걸 수 없다.** 쓰는 사람이 한 번
+봇과의 대화를 열고 '시작'을 눌러야 한다(1회). 그 전에는 봇이 답을 보낼 수 없다.
+
+## 누가 쓸 수 있나
+
+**그룹 멤버만.** 1:1 대화는 누구나 열 수 있으므로, 질문이 오면 그 사람이 뉴스
+그룹의 멤버인지 확인하고(`getChatMember`) 아니면 답하지 않는다. 회사 뉴스
+아카이브가 아무에게나 열리면 안 된다. 확인 결과는 잠깐 캐시한다.
+
 ## 설정
 
- 1. `python setup_topics.py` 를 한 번 돌린다. 이미 있는 탭은 건드리지 않고
-    '자료검색' 토픽만 새로 만들어 `topics.json` 에 thread id 를 적는다
-    (`topics.EXTRA_TOPICS` 참고). 이 탭은 분류 대상이 아니라 뉴스가 들어오지 않는다.
- 2. **BotFather 에서 봇의 Group Privacy 를 Disable 로 바꾼다.** 기본값이면 봇은
-    명령어(`/...`)와 자기에게 온 답글만 받는다 — 일반 문장으로 물을 수 없다.
-    바꾸기 싫으면 `/찾아 <질문>` 꼴로 물어도 된다(둘 다 받는다).
+ 1. 쓸 사람마다 봇과의 1:1 대화를 열고 '시작'을 누른다(1회). 그게 전부다.
+ 2. (선택) `python setup_topics.py` — '자료검색' 탭을 만들어 두면 거기 질문을
+    쓴 사람에게 "1:1로 물어보라"고 안내한다. 탭이 없어도 1:1 은 그냥 된다.
  3. (권장) `GEMINI_SEARCH_API_KEY` 를 따로 넣는다. 안 넣으면 답변 생성이
     **발행 몫 한도를 깎는다**(config 주석 참고).
 
@@ -172,6 +188,49 @@ def thread_id() -> int | None:
     return topics.load().get(TOPIC_NAME)
 
 
+# 멤버 확인 결과 캐시. {user_id: (확인시각, 멤버인가)}
+_member_cache: dict[int, tuple[float, bool]] = {}
+MEMBER_TTL = 3600.0
+
+OK_STATUS = {"creator", "administrator", "member", "restricted"}
+
+
+async def _is_member(client: httpx.AsyncClient, user_id: int) -> bool:
+    """이 사람이 뉴스 그룹의 멤버인가. 1:1 대화를 아무에게나 열어 주지 않기 위한 것."""
+    hit = _member_cache.get(user_id)
+    if hit and time.time() - hit[0] < MEMBER_TTL:
+        return hit[1]
+    url = (f"https://api.telegram.org/bot{settings.telegram_bot_token}"
+           f"/getChatMember")
+    try:
+        r = await client.get(url, params={"chat_id": settings.telegram_channel_id,
+                                          "user_id": user_id}, timeout=20)
+        ok = (r.json().get("result") or {}).get("status") in OK_STATUS
+    except (httpx.HTTPError, ValueError) as exc:
+        print(f"[자료검색] 멤버 확인 실패({user_id}): {exc}")
+        return False
+    _member_cache[user_id] = (time.time(), ok)
+    return ok
+
+
+async def _send(client: httpx.AsyncClient, chat_id, text: str,
+                thread_id: int | None = None, reply_to: int | None = None):
+    """임의의 대화로 보낸다. publisher.send_raw 는 뉴스 그룹 전용이라 따로 둔다."""
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML",
+               "link_preview_options": {"is_disabled": True}}
+    if thread_id:
+        payload["message_thread_id"] = thread_id
+    if reply_to:
+        payload["reply_parameters"] = {"message_id": reply_to}
+    url = (f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage")
+    try:
+        r = await client.post(url, json=payload, timeout=30)
+        if r.status_code != 200:
+            print(f"[자료검색] 전송 실패 {r.status_code}: {r.text[:140]}")
+    except httpx.HTTPError as exc:
+        print(f"[자료검색] 전송 오류: {exc}")
+
+
 async def _get_updates(client: httpx.AsyncClient, offset: int) -> list[dict]:
     url = (f"https://api.telegram.org/bot{settings.telegram_bot_token}"
            f"/getUpdates")
@@ -189,23 +248,28 @@ async def _get_updates(client: httpx.AsyncClient, offset: int) -> list[dict]:
     return r.json().get("result", [])
 
 
-def _question_of(msg: dict, tid: int | None) -> str | None:
-    """이 메시지가 자료검색 탭의 질문인가. 아니면 None."""
-    if str(msg.get("chat", {}).get("id")) != str(settings.telegram_channel_id):
+def _classify(msg: dict, tid: int | None) -> tuple[str, str] | None:
+    """(어디서 온 질문인가, 질문) 또는 None.
+
+    "dm"    1:1 대화 — 여기서만 실제로 답한다.
+    "group" 자료검색 탭 — 답하지 않고 1:1 로 안내만 한다(내용이 모두에게 보인다).
+    """
+    chat = msg.get("chat") or {}
+    if (msg.get("from") or {}).get("is_bot"):
         return None
-    if tid and msg.get("message_thread_id") != tid:
-        return None
+
     text = (msg.get("text") or msg.get("caption") or "").strip()
-    if not text:
-        return None
-    # 명령어로 물으면 접두사를 떼고, 일반 문장이면 그대로 쓴다.
     text = _CMD.sub("", text).strip()
     if not text or text.startswith("/"):
         return None
-    # 봇이 자기 글에 또 답하지 않게 한다.
-    if msg.get("from", {}).get("is_bot"):
-        return None
-    return text[:300]
+    text = text[:300]
+
+    if chat.get("type") == "private":
+        return "dm", text
+    if str(chat.get("id")) == str(settings.telegram_channel_id):
+        if tid and msg.get("message_thread_id") == tid:
+            return "group", text
+    return None
 
 
 async def run(client: httpx.AsyncClient, store, seconds: int = 240,
@@ -214,16 +278,15 @@ async def run(client: httpx.AsyncClient, store, seconds: int = 240,
 
     발행 루프(bot.yml)가 전체 스윕 사이에 이걸 불러 주므로, 한 번에 길게 돌지
     않고 짧게 여러 번 도는 편이 응답이 빠르다.
+
+    **답은 1:1 대화로만 나간다.** 그룹 탭에 쓴 질문에는 안내만 보낸다 —
+    거기서 답하면 누가 무엇을 찾아봤는지 모두에게 보인다(모듈 설명 참고).
     """
     tid = thread_id()
-    if tid is None:
-        print(f"[자료검색] topics.json 에 '{TOPIC_NAME}' 이 없어 건너뜀. "
-              f"토픽을 만들고 thread id 를 넣으세요.")
-        return
-
     offset = int(store.kv_get("answer_offset", "0") or 0)
     deadline = time.monotonic() + seconds
     answered = 0
+    nudged = 0
 
     while time.monotonic() < deadline:
         updates = await _get_updates(client, offset)
@@ -231,24 +294,47 @@ async def run(client: httpx.AsyncClient, store, seconds: int = 240,
             continue
         for up in updates:
             offset = max(offset, up.get("update_id", 0) + 1)
-            question = _question_of(up.get("message") or {}, tid)
-            if not question:
+            msg = up.get("message") or {}
+            got = _classify(msg, tid)
+            if not got:
                 continue
-            print(f"[자료검색] 질문: {question[:60]}")
+            where, question = got
+            user = (msg.get("from") or {}).get("id")
+
+            if where == "group":
+                # 답을 여기 쓰면 모두에게 보인다. 안내만 하고 끝낸다.
+                nudged += 1
+                if not dry_run:
+                    await _send(client, msg["chat"]["id"],
+                                "🔒 검색 결과는 <b>1:1 대화</b>로만 보내 드립니다.\n"
+                                "여기서 답하면 다른 분들께도 보이기 때문입니다.\n\n"
+                                "저와의 대화창을 열고 같은 질문을 보내 주세요.",
+                                thread_id=tid, reply_to=msg.get("message_id"))
+                continue
+
+            # ── 1:1 ──
+            if not await _is_member(client, user):
+                print(f"[자료검색] 그룹 멤버가 아니라 거절: {user}")
+                if not dry_run:
+                    await _send(client, msg["chat"]["id"],
+                                "이 봇은 뉴스 그룹 멤버만 쓸 수 있습니다.")
+                continue
+
+            print(f"[자료검색] 질문(1:1 {user}): {question[:50]}")
             text = await compose(store, question)
             if dry_run:
                 print(text)
             else:
-                await publisher.send_raw(
-                    client, text, tid,
-                    reply_to=(up.get("message") or {}).get("message_id"))
+                await _send(client, msg["chat"]["id"], text,
+                            reply_to=msg.get("message_id"))
             answered += 1
         # offset 은 **답한 뒤** 저장한다. 중간에 죽으면 같은 질문을 다시 받는다 —
         # 답을 빼먹는 것보다 두 번 답하는 쪽이 낫다.
         store.kv_set("answer_offset", str(offset))
 
-    if answered:
-        print(f"[자료검색] {answered}건 답변 (남은 모델 한도 {_budget_left(store)}회)")
+    if answered or nudged:
+        print(f"[자료검색] 1:1 답변 {answered}건 · 그룹 안내 {nudged}건 "
+              f"(남은 모델 한도 {_budget_left(store)}회)")
 
 
 async def ask_once(store, question: str) -> None:

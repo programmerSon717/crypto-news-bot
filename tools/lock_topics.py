@@ -40,8 +40,23 @@ from config import settings  # noqa: E402
 
 API = f"https://api.telegram.org/bot{settings.telegram_bot_token}"
 
-# 닫지 않고 열어 둘 탭. 사람이 글을 쓰는 곳이다.
-KEEP_OPEN = set(topics.EXTRA_TOPICS)
+# 닫지 않고 열어 둘 탭.
+#
+# **비어 있다 — 전부 닫는다.** 자료검색도 1:1 대화로 옮겼기 때문이다(assistant.py).
+# 그룹 탭에 질문을 쓰면 그 순간 누가 무엇을 찾아봤는지 모두에게 보이고 ALL 탭에도
+# 쌓인다. 봇이 "1:1로 물어보세요"라고 답해 줘도 **질문 자체는 이미 노출된 뒤**라
+# 늦다. 그래서 쓸 수 없게 닫고, 안내문만 고정해 둔다.
+KEEP_OPEN: set[str] = set()
+
+# 자료검색 탭에 고정해 둘 안내문. 닫힌 탭에도 봇(관리자)은 쓸 수 있다.
+GUIDE = (
+    "🔍 <b>자료검색 쓰는 법</b>\n\n"
+    "검색은 <b>봇과 1:1 대화</b>에서만 됩니다.\n"
+    "여기서 주고받으면 누가 무엇을 찾아봤는지 모두에게 보이기 때문입니다.\n\n"
+    "① 위 봇 이름을 눌러 대화창을 엽니다 (처음 한 번 '시작')\n"
+    "② 그냥 물어보세요 — 예: <code>체인링크 요번에 업뎃된거 뭐임?</code>\n\n"
+    "발행된 기사에서 찾아 요약과 원문 링크를 보내 드립니다."
+)
 
 # 이미 원하는 상태일 때 텔레그램이 돌려주는 설명들. 실패로 보지 않는다.
 _ALREADY = ("TOPIC_CLOSED", "TOPIC_NOT_MODIFIED", "already", "TOPIC_ID_INVALID")
@@ -107,16 +122,6 @@ async def run(unlock: bool, dry_run: bool) -> None:
             else:
                 to_close.append((name, tid))
 
-        # **열어 둘 탭이 하나도 없으면 막는다.** 이대로 닫으면 사람이 글을 쓸
-        # 곳이 사라진다. 실제로 자료검색 토픽을 만들기 전에 이걸 돌리면
-        # 16개 탭 + General 이 전부 닫히고 질문할 자리가 없어진다.
-        if not unlock and not to_open:
-            print(f"[중단] 열어 둘 탭이 없습니다 — {', '.join(sorted(KEEP_OPEN))} 이"
-                  f" {settings.topics_file} 에 없습니다.\n"
-                  f"       먼저 python setup_topics.py 로 탭을 만드세요.\n"
-                  f"       (지금 닫으면 사람이 글 쓸 곳이 하나도 남지 않습니다)")
-            return
-
         verb = "되돌리기(전부 열기)" if unlock else "뉴스 탭 닫기"
         print(f"\n== {verb} ==")
         print(f"  닫을 탭 {len(to_close)}개 / 열어 둘 탭 {len(to_open)}개"
@@ -152,13 +157,32 @@ async def run(unlock: bool, dry_run: bool) -> None:
             if not ok and not any(a in why for a in _ALREADY):
                 print(f"      실패: {why}")
 
+        # 자료검색 탭에 안내문을 올리고 고정한다. 탭이 닫혀 있어도 봇은 쓸 수 있다.
+        guide_tid = mapping.get("자료검색")
+        if guide_tid and not unlock and not dry_run:
+            r = await client.post(f"{API}/sendMessage", json={
+                "chat_id": settings.telegram_channel_id,
+                "message_thread_id": guide_tid, "text": GUIDE,
+                "parse_mode": "HTML",
+                "link_preview_options": {"is_disabled": True}}, timeout=20)
+            body = r.json()
+            if body.get("ok"):
+                mid = body["result"]["message_id"]
+                await _call(client, "pinChatMessage",
+                            chat_id=settings.telegram_channel_id,
+                            message_id=mid, disable_notification=True)
+                print("  📌 자료검색 탭에 사용법 안내문 고정")
+            else:
+                print(f"  안내문 실패: {body.get('description')}")
+
         if dry_run:
             print("\ndry-run 이었습니다. --dry-run 을 빼면 실제로 적용합니다.")
         elif unlock:
             print("\n완료. 모든 탭을 다시 열었습니다.")
         else:
-            print(f"\n완료. 이제 일반 멤버는 {', '.join(sorted(KEEP_OPEN))} 탭에만"
-                  f" 글을 쓸 수 있습니다.\n"
+            print(f"\n완료. 일반 멤버는 어느 탭에도 글을 쓸 수 없습니다"
+                  f"{' (열어 둔 탭: ' + ', '.join(sorted(KEEP_OPEN)) + ')' if KEEP_OPEN else ''}.\n"
+                  f"검색은 봇과의 1:1 대화로만 합니다 — 서로의 검색 내역이 보이지 않습니다.\n"
                   f"봇은 닫힌 탭에도 계속 발행합니다(관리자 + 주제 관리 권한).\n"
                   f"되돌리려면: python tools/lock_topics.py --unlock")
 
