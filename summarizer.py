@@ -74,12 +74,47 @@ async def _throttle(model: str, kind: str = "기타"):
 _rr = 0
 
 
+# 모델별 하루 한도(2026-10-01 실측 — 429 응답의 quotaValue).
+# 여기 없는 모델은 큰 쪽으로 가정한다(새 모델이 들어와도 보수적으로 먼저 쓴다).
+#
+# **gemini-flash-lite-latest 는 gemini-3.5-flash-lite 의 별칭이라 같은 통을 쓴다.**
+# 모델 이름이 7개지만 실제 한도 통은 6개다.
+MODEL_DAILY_LIMIT = {
+    "gemini-3.1-flash-lite": 500,
+    "gemini-3.5-flash-lite": 500,
+    "gemini-flash-lite-latest": 500,
+    "gemini-3.6-flash": 20,
+    "gemini-3.7-flash": 20,
+    "gemini-3.5-flash": 20,
+    "gemini-3-flash-preview": 20,
+}
+# 이 선 아래면 '예비'로 둔다. 큰 모델이 전부 막혔을 때만 쓴다.
+SMALL_LIMIT = 100
+
+
 def _rotate(models: list[str]) -> list[str]:
+    """쓸 순서를 정한다. **한도가 큰 모델을 먼저 쓰고 작은 것은 예비로 남긴다.**
+
+    예전에는 전부 균등하게 돌려써서, 하루 20회짜리 모델 4개가 초반 100여 회
+    만에 소진됐다(실측 2026-10-01 16시~17시: 3.5-flash 19/20, 3.6-flash 18/20
+    인데 flash-lite 두 통은 950회가 남아 있었다). 작은 통을 일찍 비우면
+    큰 통이 분당 한도에 걸렸을 때 받아 줄 예비가 없다.
+
+    같은 등급 안에서는 돌려쓴다 — 분당 한도(RATE_LIMIT_RPM)가 모델별이라
+    한 모델에 몰면 처리량이 그만큼 떨어진다.
+    """
     global _rr
     if len(models) < 2:
         return models
-    _rr = (_rr + 1) % len(models)
-    return models[_rr:] + models[:_rr]
+    big = [m for m in models if MODEL_DAILY_LIMIT.get(m, 500) > SMALL_LIMIT]
+    small = [m for m in models if m not in big]
+    if len(big) >= 2:
+        _rr = (_rr + 1) % len(big)
+        big = big[_rr:] + big[:_rr]
+    elif len(small) >= 2:
+        _rr = (_rr + 1) % len(small)
+        small = small[_rr:] + small[:_rr]
+    return big + small
 
 
 # 한도에 걸린 모델과 **다시 시도해도 되는 시각**.
@@ -133,9 +168,29 @@ def _is_quota_exhausted(msg: str) -> bool:
     return "PerDay" in msg and "PerMinute" not in msg
 
 
+# 이름은 다르지만 **같은 한도 통**을 쓰는 모델. 별칭 → 실제 모델.
+# 둘 다 후보에 두면 코드가 서로 다른 모델로 알고 분당 스로틀을 따로 걸어,
+# 실제보다 처리량을 부풀려 잡는다(그러면 분당 한도 429 를 더 받는다).
+MODEL_ALIAS = {
+    "gemini-flash-lite-latest": "gemini-3.5-flash-lite",
+}
+
+
 def _candidates() -> list[str]:
-    """시도할 모델 목록. 주 모델이 폴백 목록에도 있으면 중복 호출이 되므로 정리한다."""
-    return list(dict.fromkeys([settings.gemini_model, *FALLBACK_MODELS]))
+    """시도할 모델 목록.
+
+    주 모델이 폴백 목록에도 있으면 중복 호출이 되므로 정리하고,
+    **같은 한도 통을 쓰는 별칭도 하나로 묶는다**(MODEL_ALIAS).
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in [settings.gemini_model, *FALLBACK_MODELS]:
+        bucket = MODEL_ALIAS.get(m, m)
+        if bucket in seen:
+            continue
+        seen.add(bucket)
+        out.append(bucket)
+    return out
 
 
 def _usable(models: list[str]) -> list[str]:
@@ -306,8 +361,11 @@ async def generate_json(system_prompt: str, user_prompt: str,
                     if _exhausted.get(model, 0) <= time.monotonic():
                         wait = DAILY_COOLDOWN_SEC
                         _rest(model, wait)
-                        print(f"[모델] {model} 하루 한도 소진 — "
-                              f"{wait/60:.0f}분 쉰다(리셋은 KST 16시)")
+                        left = [m for m in _usable(_candidates()) if m != model]
+                        print(f"[모델] {model}(하루 {MODEL_DAILY_LIMIT.get(model,'?')}회) "
+                              f"소진 — {wait/60:.0f}분 쉰다. "
+                              + (f"남은 모델 {len(left)}개" if left
+                                 else "**모든 모델 소진** — 다음 리셋은 KST 16시"))
                     break
                 if _retryable(e, msg):
                     delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \
@@ -375,8 +433,11 @@ async def summarize_insight(item: NewsItem, posted_at: str) -> dict | None:
                     if _exhausted.get(model, 0) <= time.monotonic():
                         wait = DAILY_COOLDOWN_SEC
                         _rest(model, wait)
-                        print(f"[모델] {model} 하루 한도 소진 — "
-                              f"{wait/60:.0f}분 쉰다(리셋은 KST 16시)")
+                        left = [m for m in _usable(_candidates()) if m != model]
+                        print(f"[모델] {model}(하루 {MODEL_DAILY_LIMIT.get(model,'?')}회) "
+                              f"소진 — {wait/60:.0f}분 쉰다. "
+                              + (f"남은 모델 {len(left)}개" if left
+                                 else "**모든 모델 소진** — 다음 리셋은 KST 16시"))
                     break
                 if _retryable(e, msg):
                     delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \
@@ -441,8 +502,11 @@ async def summarize_briefing(item: NewsItem) -> dict | None:
                     if _exhausted.get(model, 0) <= time.monotonic():
                         wait = DAILY_COOLDOWN_SEC
                         _rest(model, wait)
-                        print(f"[모델] {model} 하루 한도 소진 — "
-                              f"{wait/60:.0f}분 쉰다(리셋은 KST 16시)")
+                        left = [m for m in _usable(_candidates()) if m != model]
+                        print(f"[모델] {model}(하루 {MODEL_DAILY_LIMIT.get(model,'?')}회) "
+                              f"소진 — {wait/60:.0f}분 쉰다. "
+                              + (f"남은 모델 {len(left)}개" if left
+                                 else "**모든 모델 소진** — 다음 리셋은 KST 16시"))
                     break
                 if _retryable(e, msg):
                     delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \
@@ -488,8 +552,11 @@ async def summarize(item: NewsItem, recent: list | None = None) -> dict | None:
                     if _exhausted.get(model, 0) <= time.monotonic():
                         wait = DAILY_COOLDOWN_SEC
                         _rest(model, wait)
-                        print(f"[모델] {model} 하루 한도 소진 — "
-                              f"{wait/60:.0f}분 쉰다(리셋은 KST 16시)")
+                        left = [m for m in _usable(_candidates()) if m != model]
+                        print(f"[모델] {model}(하루 {MODEL_DAILY_LIMIT.get(model,'?')}회) "
+                              f"소진 — {wait/60:.0f}분 쉰다. "
+                              + (f"남은 모델 {len(left)}개" if left
+                                 else "**모든 모델 소진** — 다음 리셋은 KST 16시"))
                     break
                 if _retryable(e, msg):
                     delay = _retry_after(msg) if "429" in msg or "RESOURCE_EXHAUSTED" in msg \
