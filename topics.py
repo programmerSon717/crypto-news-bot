@@ -62,6 +62,15 @@ if _names:
     CATEGORIES = {k: (_names.get(k, n), c) for k, (n, c) in CATEGORIES.items()}
 
 
+# 뉴스가 들어가지 않는 탭. **CATEGORIES 에 넣으면 안 된다** —
+# 그 키는 모델이 뱉는 분류값이자 라우팅·다이제스트·해시태그의 기준이라
+# 여기에 섞으면 모델이 뉴스를 이 탭으로 보낸다.
+# 토픽 생성(ensure_topics)에만 참여하고, 분류에는 관여하지 않는다.
+EXTRA_TOPICS = {
+    "자료검색": ("🔍자료검색", 0x8EEE98),
+}
+
+
 def _load() -> dict:
     if os.path.exists(settings.topics_file):
         with open(settings.topics_file, encoding="utf-8") as f:
@@ -77,7 +86,7 @@ def _save(data: dict):
 async def ensure_topics(client: httpx.AsyncClient) -> dict:
     """카테고리별 토픽을 생성(없을 때만)하고 {카테고리: thread_id} 를 반환."""
     cache = _load()
-    for cat, (name, color) in CATEGORIES.items():
+    for cat, (name, color) in {**CATEGORIES, **EXTRA_TOPICS}.items():
         if cat in cache:
             continue
         r = await client.post(
@@ -96,6 +105,11 @@ async def ensure_topics(client: httpx.AsyncClient) -> dict:
         print(f"[topics] 생성됨: {name} (thread_id={cache[cat]})")
     _save(cache)
     return cache
+
+
+def load() -> dict:
+    """topics.json 그대로. {탭 이름: thread_id}."""
+    return _load()
 
 
 def thread_id_for(category: str) -> int | None:

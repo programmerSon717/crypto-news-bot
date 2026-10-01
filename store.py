@@ -275,6 +275,37 @@ class Store:
             ).fetchall()
         return [(r[0] or "", r[1]) for r in rows]
 
+    def kv_get(self, key: str, default: str = "") -> str:
+        """작은 운영 상태값. 자료검색 탭의 getUpdates offset·일일 호출 수 등."""
+        with self._conn() as c:
+            c.execute("CREATE TABLE IF NOT EXISTS kv "
+                      "(k TEXT PRIMARY KEY, v TEXT)")
+            row = c.execute("SELECT v FROM kv WHERE k=?", (key,)).fetchone()
+        return row[0] if row else default
+
+    def kv_set(self, key: str, value: str) -> None:
+        with self._conn() as c:
+            c.execute("CREATE TABLE IF NOT EXISTS kv "
+                      "(k TEXT PRIMARY KEY, v TEXT)")
+            c.execute("INSERT INTO kv (k, v) VALUES (?,?) "
+                      "ON CONFLICT(k) DO UPDATE SET v=excluded.v", (key, value))
+
+    def searchable(self, limit: int = 30000) -> list[tuple]:
+        """자료검색 색인(`search.Index`)에 넣을 발행글.
+
+        본문(`text`)은 넣지 않는다 — HTML·이모지·해시태그가 섞여 잡음이 크고,
+        리드가 이미 사건을 한 문장으로 담고 있다. 원문이 필요하면 `message_id`
+        로 채널 글을 링크한다.
+        """
+        with self._conn() as c:
+            rows = c.execute(
+                """SELECT key, category, headline, lede, message_id, thread_id,
+                          source_url, published_at
+                   FROM published WHERE headline IS NOT NULL
+                   ORDER BY published_at DESC LIMIT ?""", (limit,),
+            ).fetchall()
+        return [tuple(r) for r in rows]
+
     def all_headlines(self, limit: int = 30000) -> list[str]:
         """발행한 모든 헤드라인. 낱말 희귀도(IDF) 학습용."""
         with self._conn() as c:

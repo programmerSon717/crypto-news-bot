@@ -21,6 +21,14 @@ class Settings:
     # 무료 티어 일일 한도가 500건으로 가장 크다. 나머지 flash 계열은 20건/일이라
     # 주 모델로 쓰면 하루 20건 만에 발행이 멈춘다. (summarizer.FALLBACK_MODELS 참고)
 
+    # 자료검색 탭 전용 Gemini 키. **비워 두면 발행과 같은 키를 쓴다.**
+    #
+    # 무료 한도는 프로젝트 단위라, 같은 키를 쓰면 검색 답변이 발행 몫을 깎는다.
+    # 실측(2026-10-01): 발행이 한도를 거의 다 쓰고 있어 검색 질문 두 건 중
+    # 한 건이 '검색 결과만' 으로 떨어졌다. 별도 프로젝트에서 키를 하나 더 받아
+    # 넣으면 둘이 간섭하지 않는다. 없으면 기능이 죽지는 않고 투박해질 뿐이다.
+    gemini_search_api_key: str = os.getenv("GEMINI_SEARCH_API_KEY", "")
+
     # (구) Anthropic — 더 이상 사용하지 않음. 되돌리고 싶을 때 참고용으로만 남겨둠.
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     claude_model: str = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")

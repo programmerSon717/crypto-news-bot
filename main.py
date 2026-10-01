@@ -701,6 +701,21 @@ async def main():
             print(f"[warm] {len(items)}건 등록 완료. 이제 python main.py 로 실행하세요.")
             return
 
+        if "--ask" in sys.argv:
+            # 콘솔에서 자료검색을 시험한다. 텔레그램을 거치지 않는다.
+            import assistant
+            await assistant.ask_once(store, _arg_value("--ask") or "")
+            return
+
+        if "--answer" in sys.argv:
+            # 자료검색 탭의 질문을 받아 답한다. 발행 루프가 전체 스윕 사이의
+            # 대기 시간에 이걸 불러 주므로(bot.yml), 그냥 자는 대신 일을 한다.
+            import assistant
+            await assistant.run(client, store,
+                                seconds=int(_arg_value("--seconds") or 240),
+                                dry_run=dry_run)
+            return
+
         if "--urgent" in sys.argv:
             # 긴급 레인: 지표 발표·FOMC·잭슨홀 등 늦으면 가치가 없어지는 건만
             # 짧은 주기로 잡는다. 전체 스윕(--once)과 분리돼 있다.

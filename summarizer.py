@@ -34,6 +34,13 @@ client = genai.Client(
     http_options=types.HttpOptions(timeout=90_000),
 )
 
+# 자료검색 탭 전용 클라이언트. 키를 따로 주지 않았으면 위 클라이언트를 그대로 쓴다
+# (그 경우 검색 답변이 발행 몫 한도를 깎는다 — config 주석 참고).
+search_client = genai.Client(
+    api_key=settings.gemini_search_api_key,
+    http_options=types.HttpOptions(timeout=90_000),
+) if settings.gemini_search_api_key else client
+
 # 라이브러리 단 타임아웃이 안 먹는 경우를 대비한 상한(초).
 CALL_TIMEOUT = 120
 
@@ -219,11 +226,16 @@ def _generate_vision_sync(model: str, user_prompt: str, image: bytes | None,
 
 
 async def generate_json(system_prompt: str, user_prompt: str,
-                        max_tokens: int = 2000) -> dict | None:
+                        max_tokens: int = 2000, *,
+                        use_search_key: bool = False) -> dict | None:
     """임의의 시스템 프롬프트로 JSON 응답을 받는다(다이제스트 등 범용).
 
     요약·분류 경로와 동일하게 503/429 재시도 + 대체 모델 폴백을 적용한다.
+
+    `use_search_key=True` 면 자료검색 전용 키를 쓴다. 키가 설정돼 있지 않으면
+    발행과 같은 클라이언트로 떨어진다(동작은 같고 한도를 공유한다).
     """
+    api = search_client if use_search_key else client
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,
         response_mime_type="application/json",
@@ -232,7 +244,7 @@ async def generate_json(system_prompt: str, user_prompt: str,
     )
 
     def _call(model: str) -> str:
-        resp = client.models.generate_content(
+        resp = api.models.generate_content(
             model=model, contents=user_prompt, config=config
         )
         return resp.text or ""

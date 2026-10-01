@@ -73,6 +73,8 @@ jobs:
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.1-flash-lite' }}
+          # 자료검색 탭 전용 키. 비어 있으면 위 키를 함께 쓴다(발행 한도를 깎는다).
+          GEMINI_SEARCH_API_KEY: ${{ secrets.GEMINI_SEARCH_API_KEY }}
           # 3 이 기본이다. 4로 올리면 토큰화 주식 거래량·온체인 출금 같은
           # 진짜 시장 뉴스까지 잘린다(실측: 유효 20건 중 발행 가능 1건).
           # 범위는 중요도가 아니라 주제로 가른다 — prompts 의 '크립토 관련성' 절.
@@ -208,7 +210,19 @@ jobs:
               SLEEP=$URGENT_INTERVAL_SEC
               LEFT=$(( POLL_INTERVAL_SEC - WAITED ))
               [[ $SLEEP -gt $LEFT ]] && SLEEP=$LEFT
-              sleep "$SLEEP"
+
+              # 그냥 자지 않고 그 시간에 '자료검색' 탭 질문을 받는다.
+              # 롱폴링(getUpdates)이라 질문이 없으면 그냥 대기하는 것과 같다.
+              #
+              # **남은 시간을 반드시 다 쓴다.** 토픽이 설정돼 있지 않거나
+              # 통신이 실패하면 --answer 가 곧바로 끝나는데, 그걸 그냥 두면
+              # 이 while 루프가 빈 채로 돌면서 CPU 와 API 를 태운다.
+              T0=$(date +%s)
+              python main.py --answer --seconds "$SLEEP" \
+                || echo "  [경고] 자료검색 실패 — 다음 회차로"
+              REST=$(( SLEEP - ($(date +%s) - T0) ))
+              [[ $REST -gt 0 ]] && sleep "$REST"
+
               WAITED=$(( WAITED + SLEEP ))
               [[ $(date +%s) -ge $LOOP_END ]] && break
               echo "::group::긴급 레인  ($(TZ=Asia/Seoul date '+%H:%M KST'))"
